@@ -57,6 +57,7 @@ from app.services import (
     domain_match,
     evidence_tags,
     feedback_learning,
+    job_intake,
     ranker,
     resume_length,
     resume_matching,
@@ -1277,7 +1278,8 @@ def job_from_url(payload: JobUrlIn, db: Session = Depends(get_user_db)):
                                   "missing": missing, "extracted": data})
     ref = hashlib.sha256(payload.url.encode()).hexdigest()[:40]
     job, created = upsert_job(db, source="manual", source_ref=ref, title=data["title"], company=data["company"],
-                              location=data["location"], url=payload.url, description=data["description"])
+                              location=data["location"], url=payload.url, description=data["description"],
+                              extra=job_intake.identity(payload.url, data["title"], data["company"], data["location"]))
     return {"created": created, "job": job_card(job)}
 
 
@@ -1308,7 +1310,8 @@ def job_from_text(payload: JobTextIn, db: Session = Depends(get_user_db)):
     key = url or f"text:{company.casefold()}|{title.casefold()}|{payload.location.strip().casefold()}"
     ref = hashlib.sha256(key.encode()).hexdigest()[:40]
     job, created = upsert_job(db, source="manual", source_ref=ref, title=title, company=company,
-                              location=payload.location.strip(), url=url, description=text)
+                              location=payload.location.strip(), url=url, description=text,
+                              extra=job_intake.identity(url, title, company, payload.location.strip()))
     if created or job.description == text:
         jd_recovery.on_description_changed(db, job, by_user=True)
         db.commit()
@@ -1400,10 +1403,7 @@ class JobDescriptionIn(BaseModel):
 def save_job_description(job_id: int, payload: JobDescriptionIn, request: Request, background: BackgroundTasks,
                          db: Session = Depends(get_user_db)):
     """Set the posting text by hand (typed, pasted or fetched), then parse and rank it."""
-    from app.services import (  # local import, as app.services.sources does
-        job_description,
-        job_intake,
-    )
+    from app.services import job_description  # local import, as app.services.sources does
 
     job = job_description.lock_job(db, job_id)
     if job is None:

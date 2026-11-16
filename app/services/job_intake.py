@@ -39,6 +39,8 @@ MAX_SOURCE = 50
 MAX_SALARY = 200
 MAX_NOTES = 2000
 MAX_REASON = 500
+# Most rows read when matching jobs saved without a canonical URL or dedupe key (bounded, oldest first).
+LEGACY_SCAN = 2000
 WORKPLACE_TYPES = ("onsite", "hybrid", "remote")
 WORKPLACE_ALIASES = {"on-site": "onsite", "on site": "onsite", "office": "onsite", "in office": "onsite",
                      "in-office": "onsite", "wfh": "remote", "work from home": "remote"}
@@ -109,6 +111,12 @@ def source_label(url: str) -> str:
         if host == suffix or host.endswith("." + suffix):
             return label
     return "company_site"
+
+
+def identity(url: str, title: str, company: str, location: str = "") -> dict[str, Any]:
+    """The columns duplicate matching reads (canonical URL, company + title + city key), for any path that adds a
+    job by hand, so a posting saved in Discovery and one added over MCP are recognised as the same job."""
+    return {"canonical_url": canonical_url(url) if url else None, "dedupe_key": dedupe_key(title, company, location)}
 
 
 def manual_ref(canon: str) -> str:
@@ -219,12 +227,23 @@ def find_existing(db: Session, owner: int, *, url: str, title: str = "", company
     if canon:
         by_url += [Job.canonical_url == canon, Job.canonical_apply_url == canon]
     found = db.scalars(mine.where(or_(*by_url)).order_by(Job.id).limit(1)).first()
+    if found is None and canon:
+        # Jobs saved before they had a canonical URL (Discovery's own add paths stored the URL exactly as pasted,
+        # tracking parameters included): normalise each candidate on the same host and compare.
+        host = urlparse(canon).hostname or ""
+        legacy = mine.where(Job.canonical_url.is_(None), Job.url.ilike(f"%{host}%")).order_by(Job.id).limit(LEGACY_SCAN)
+        found = next((job for job in db.scalars(legacy) if canonical_url(job.url) == canon), None)
     if found is not None:
         return found, "url"
     if by_key:
         # The same key hunter.find_duplicate matches discovered jobs by (company suffixes dropped, first city part).
-        found = db.scalars(mine.where(Job.dedupe_key == dedupe_key(title, company, location))
-                           .order_by(Job.id).limit(1)).first()
+        key = dedupe_key(title, company, location)
+        found = db.scalars(mine.where(Job.dedupe_key == key).order_by(Job.id).limit(1)).first()
+        if found is None:
+            # Jobs with no stored key (added in Discovery before keys were kept): the key computed from their fields.
+            legacy = mine.where(Job.dedupe_key.is_(None), Job.source == "manual").order_by(Job.id).limit(LEGACY_SCAN)
+            found = next((job for job in db.scalars(legacy)
+                          if dedupe_key(job.title, job.company, job.location) == key), None)
         if found is not None:
             return found, "dedupe_key"
     return None, None
@@ -287,7 +306,7 @@ def add(db: Session, fields: dict[str, Any], *, via: str = "mcp") -> Added:
             "description_from": ("provided" if data.get("description") else
                                  f"fetched:{fetched.method}" if fetched and fetched.ok else None)}.items()
             if v is not None}},
-        extra={"canonical_url": canon, "dedupe_key": key, "source_board": source,
+        extra={**identity(url, title, company, location), "canonical_url": canon, "source_board": source,
                "remote_type": data.get("workplace_type")})
     if not created:  # another call saved the same posting a moment ago
         return Added(job, True, "url", ["Already saved: nothing was changed."])
@@ -321,7 +340,7 @@ def replace_description(db: Session, job: Job, text: str, *, actor: str) -> str 
 def update(db: Session, job_id: int, fields: dict[str, Any], *, actor: str = "mcp") -> tuple[Job, list[str], dict]:
     """Correct or enrich a job. An applied job only takes notes. Returns (job, changed fields, rescoring) where
     rescoring says whether a new description was queued for ranking. Commits."""
-    from app.services import job_description
+    from app.services import apply_queue, job_description
 
     data = validate({k: v for k, v in fields.items() if v is not None}, partial=True)
     data.pop("fetch_description", None)
@@ -334,11 +353,16 @@ def update(db: Session, job_id: int, fields: dict[str, Any], *, actor: str = "mc
     if is_applied(job) and set(data) - {"notes"}:
         raise IntakeError(f"Job {job.id} was already applied to: only notes can change")
     changed: list[str] = []
-    if "apply_url" in data and data["apply_url"] != job.url:
-        other, _ = find_existing(db, job.user_id, url=data["apply_url"], exclude=job.id, by_key=False)
+    if "apply_url" in data and data["apply_url"] not in {job.url, apply_queue.apply_url(job)} - {None}:
+        new_url, new_canon = data["apply_url"], canonical_url(data["apply_url"])
+        other, _ = find_existing(db, job.user_id, url=new_url, exclude=job.id, by_key=False)
         if other is not None:
             raise IntakeError(f"That URL is already saved as job {other.id} ({other.title} at {other.company})")
-        job.url, job.canonical_url = data["apply_url"], canonical_url(data["apply_url"])
+        job.url, job.canonical_url = new_url, new_canon
+        if job.direct_apply_url or job.canonical_apply_url:
+            # The board's direct apply link wins in apply_queue.apply_url: the correction replaces it, so every
+            # application flow uses the corrected address, not only the posting link.
+            job.direct_apply_url, job.canonical_apply_url = new_url, new_canon
         changed.append("apply_url")
     for name in ("title", "company", "location"):
         if name in data and data[name] != getattr(job, name):

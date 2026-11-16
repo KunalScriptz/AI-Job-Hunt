@@ -195,6 +195,39 @@ def test_duplicate_matches_discovered_jobs_by_their_stored_url(uid):
     assert out["duplicate"] and out["job_id"] == seen_id and out["status"] == "shortlisted"
 
 
+@pytest.mark.parametrize("saved_url", ["https://example.com/jobs/1?utm_source=email",
+                                       "https://www.example.com/jobs/1/#apply"])
+def test_jobs_saved_before_they_had_a_canonical_url_are_still_duplicates(uid, saved_url):
+    with session(uid) as db:  # as Discovery's add paths stored them: the pasted URL, no canonical URL or key
+        old = Job(source="manual", source_ref=uuid.uuid4().hex, title="Platform Engineer", company="Example",
+                  location="Remote", url=saved_url)
+        db.add(old)
+        db.commit()
+        old_id = old.id
+    by_url = call(uid, "add_job", apply_url="https://example.com/jobs/1", title="Something else",
+                  company="Other", fetch_description=False)
+    assert by_url["duplicate"] and by_url["job_id"] == old_id and by_url["matched_by"] == "url"
+    by_key = call(uid, "add_job", apply_url="https://example.com/careers/platform", title="Platform Engineer",
+                  company="Example Inc", location="Remote", fetch_description=False)
+    assert by_key["duplicate"] and by_key["job_id"] == old_id and by_key["matched_by"] == "dedupe_key"
+
+
+def test_discovery_add_paths_store_the_identity_mcp_matches(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import workspace
+    from app.main import app as web
+    monkeypatch.setattr(workspace, "fetch_job_posting", lambda *a, **k: {"description": "", "description_source": ""})
+    response = TestClient(web).post("/api/jobs/from-url", json={
+        "url": "https://example.com/jobs/7?utm_source=email", "title": "Data Engineer", "company": "Example",
+        "location": "Berlin, Germany"})
+    assert response.status_code == 200, response.text
+    saved = response.json()["job"]["id"]
+    with SessionLocal() as db:
+        job = db.get(Job, saved)
+        assert job.canonical_url == "https://example.com/jobs/7" and job.dedupe_key == "example|data engineer|berlin"
+
+
 def test_duplicate_by_company_title_and_city(uid):
     first = call(uid, "add_job", apply_url="https://builtin.com/job/fde/1", title="Forward Deployed Engineer",
                  company="Cursor", location="Bengaluru, India", description=LONG_TEXT)
@@ -358,6 +391,25 @@ def test_update_job_refuses_a_url_another_job_has_and_needs_a_change(uid):
     assert call(uid, "update_job", job_id=999_999, title="x")["ok"] is False
     moved = call(uid, "update_job", job_id=two["job_id"], apply_url="https://jobs.lever.co/cursor/b?lever-source=x")
     assert moved["ok"] and moved["apply_url"] == "https://jobs.lever.co/cursor/b" and moved["ats"] == "lever"
+
+
+def test_update_job_replaces_a_discovered_jobs_direct_apply_url(uid):
+    with session(uid) as db:  # a board import whose direct apply link wins in apply_queue.apply_url
+        job = Job(source="apify:linkedin", source_ref=uuid.uuid4().hex, title="Backend Engineer", company="Grab",
+                  url="https://www.linkedin.com/jobs/view/4012345678/",
+                  direct_apply_url="https://grab.careers/old-form", canonical_apply_url="https://grab.careers/old-form")
+        db.add(job)
+        db.commit()
+        job_id = job.id
+    out = call(uid, "update_job", job_id=job_id, apply_url="https://boards.greenhouse.io/grab/jobs/77")
+    assert out["ok"] and out["apply_url"] == "https://boards.greenhouse.io/grab/jobs/77" and out["ats"] == "greenhouse"
+    job = job_row(uid, job_id)
+    assert job.direct_apply_url == job.url == "https://boards.greenhouse.io/grab/jobs/77"
+    assert job.canonical_apply_url == "https://boards.greenhouse.io/grab/jobs/77"
+    # the old form address no longer identifies this job
+    again = call(uid, "add_job", apply_url="https://grab.careers/old-form", title="Other", company="Other",
+                 fetch_description=False)
+    assert again["duplicate"] is False
 
 
 # ───────────── archive_job ─────────────
