@@ -19,7 +19,7 @@ KEPT_SCALARS = {"job_id", "job_ids", "minimum_fit_score", "posted_after", "locat
                 "reviewer_score_above", "include_blocked", "offset", "formats", "include_content", "outcome",
                 "blocker_reason", "question_ids", "answer_type", "category", "sensitive", "required",
                 "who_applies", "cover_letter_files", "query", "stage", "within_days", "application_id",
-                "followup_id", "channel"}
+                "followup_id", "channel", "workplace_type", "source", "fetch_description"}
 
 
 def summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:

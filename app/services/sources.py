@@ -47,7 +47,10 @@ def upsert_job(
     posted_at: datetime | None = None,
     posted_date_raw: str | None = None,
     search_run_id: int | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> tuple[Job, bool]:
+    """Create the job (then admit it: app.services.discovery) or update the one with the same source and ref.
+    `extra` sets further Job columns on a new job only, before it is admitted."""
     from app.services import (  # local import: sources is imported while the app is starting up
         discovery,
         jd_recovery,
@@ -88,6 +91,7 @@ def upsert_job(
         posted_at=posted_at,
         posted_date_raw=posted_date_raw,
         search_run_id=search_run_id,
+        **(extra or {}),
     )
     db.add(job)
     db.flush()

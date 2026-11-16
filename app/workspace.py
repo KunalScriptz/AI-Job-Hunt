@@ -16,7 +16,16 @@ from typing import Literal
 
 import httpx
 from bs4 import BeautifulSoup
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, desc, exists, func, or_, select, update
@@ -54,7 +63,6 @@ from app.services import (
     resume_verification,
 )
 from app.services import followups as followup_service
-from app.services.approval import ApprovalRefused
 from app.services.actors import (
     ACTOR_GROUPS,
     BUILTIN,
@@ -75,6 +83,7 @@ from app.services.ai_config import is_free_model
 from app.services.ai_config import resolve as resolve_ai_config
 from app.services.application_inbox import service as inbox_service
 from app.services.application_inbox.classify import HUMAN_REPLY_TYPES
+from app.services.approval import ApprovalRefused
 from app.services.contacts import (
     MAX_RECRUITERS,
     ContactIn,
@@ -91,6 +100,7 @@ from app.services.contacts import (
 from app.services.exports import DOCX_MEDIA_TYPE, markdown_to_docx, packet_filename, packet_slug
 from app.services.external_api import external_client
 from app.services.external_monitoring import run_location
+from app.services.job_intake import PACKET_STATUSES
 from app.services.job_removal import PROTECTED_STATUSES, delete_job
 from app.services.knowledge import question_key
 from app.services.lifecycle import WorkflowState as S
@@ -988,9 +998,9 @@ class BulkTriageIn(BaseModel):
 def apply_triage(job: Job, action: str) -> None:
     if action not in TRIAGE_ACTIONS:
         raise HTTPException(422, "Unknown triage action")
-    if job.status in ("tailored", NEEDS_RETAILOR, "approved", "applied", "pending_approval") and action != "shortlist":
+    if job.status in PACKET_STATUSES and action != "shortlist":
         raise HTTPException(409, "This job already has a tailored packet or application")
-    if job.status not in ("tailored", NEEDS_RETAILOR, "approved", "applied", "pending_approval"):
+    if job.status not in PACKET_STATUSES:
         job.status = TRIAGE_ACTIONS[action]
     job.triaged_at = None if action == "restore" else utcnow()
 
@@ -1391,8 +1401,8 @@ def save_job_description(job_id: int, payload: JobDescriptionIn, request: Reques
                          db: Session = Depends(get_user_db)):
     """Set the posting text by hand (typed, pasted or fetched), then parse and rank it."""
     from app.services import (  # local import, as app.services.sources does
-        jd_recovery,
         job_description,
+        job_intake,
     )
 
     job = job_description.lock_job(db, job_id)
@@ -1403,15 +1413,8 @@ def save_job_description(job_id: int, payload: JobDescriptionIn, request: Reques
     if len(text) < floor:
         raise HTTPException(422, f"That is too short to rank against — paste the full description (at least {floor} "
                                  "characters)")
-    job.description = text
-    job_description.normalize_job(db, job)
-    # A person's own text: never replaced by recovery, and recovery that has not started is cancelled.
-    jd_recovery.on_description_changed(db, job, by_user=True)
-    job_description.queue_parse(db, job, reason="description_changed")
-    ranker.reopen_for_description(db, job, actor=f"user:{db.info['user_id']}")
-    # A job ranked without a description (or with a different one) is ranked again against the new text.
-    why = ranker.queue_job(db, job, policy=ranker.policy_for(db, job.user_id), actor=f"user:{db.info['user_id']}",
-                           reason="description_changed", force=True)
+    # A person's own text: never replaced by recovery, parsed again, and the job ranked again against it.
+    why = job_intake.replace_description(db, job, text, actor=f"user:{db.info['user_id']}")
     db.commit()
     run_soon(background, request.app, "ranking")
     return {"job": job_card(job), "ranking_queued": why is None, "ranking_skipped": why}
