@@ -2742,8 +2742,12 @@ context window, and opens to:
   3. *Quality floor*: at least 90% of the requests behind the evidence succeeded, whatever the model in use does.
   4. *Comparable evidence*: another worker's requests count only when they were at least half the size of this
      worker's average prompt.
-  5. *Better than the model in use*, by a margin on the same score. With too few requests here, the model in use is
-     judged on all its requests.
+  5. *Better than the model in use*, by a margin on the same score. Evidence from another worker or from other
+     accounts is compared on reliability and output quality only, on both sides: speed measured on other prompts
+     never makes a model "better". With too few requests here, the model in use is judged on all its requests.
+
+  The typical request counts prompts the provider did not report at Job Hunt OS's own estimate. An answer a LiteLLM
+  fallback gave is a failure of the model that was asked and never proof of its capacity or JSON support.
 
   The panel says how many models fell at which gate, so an empty list explains itself.
 - **Switch**: one tap sends the model and its backups in one change. The model it used becomes the first backup, the

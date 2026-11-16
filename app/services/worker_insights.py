@@ -29,8 +29,13 @@ make the worker worse, and "unknown" never passes a gate on its own:
    judged ones were valid JSON), whatever the model in use is doing. "Better than nothing measured" is not better.
 4. Comparable evidence. Another worker's requests count only when they were about as large as this worker's
    (at least COMPARABLE_SHARE of its average prompt): answering 1K prompts says nothing about 25K ones.
-5. Better than the model in use, by MARGIN, on the same score. A model in use with too few requests here is judged
-   on all its requests; with none anywhere, gates 1–4 still apply.
+5. Better than the model in use, by MARGIN, on the same score. Evidence from elsewhere (another worker, other
+   accounts) carries no latency this worker can use, so there both sides are scored on reliability and output
+   quality alone: a model is never "better" only because its speed was measured against a kinder baseline. A model
+   in use with too few requests here is judged on all its requests; with none anywhere, gates 1–4 still apply.
+
+A LiteLLM fallback's answer came from another model. It counts as a failure of the model that was asked and is never
+evidence of what that model can do (its capacity, or its JSON).
 
 Each worker's entry reports how many models were screened out at which gate, so an empty list explains itself.
 
@@ -107,6 +112,17 @@ def _stats(items: list[Any], baseline_p95: int | None = None) -> dict[str, Any]:
     return {"samples": summary["samples"], "success_pct": round(100 - failure, 1) if failure is not None else None,
             "schema_valid_pct": summary["schema_valid_pct"], "p50_ms": summary["p50_ms"], "p95_ms": summary["p95_ms"],
             "cost_per_request": summary["cost_per_request"], "score": model_health.score(health, baseline_p95)}
+
+
+def _measured(items: list[Any]) -> dict[str, Any]:
+    """The worker's typical request for model_market.requirements_for. A prompt the provider did not count is taken
+    at our own estimate, as `_context` shows it: leaving those out would size the worker by its registry minimum
+    while it sends far larger requests."""
+    ok = [r for r in items if r.status == "SUCCEEDED"]
+    ins = [_size(r) for r in ok if _size(r)]
+    outs = [int(r.output_tokens) for r in ok if r.output_tokens]
+    return {"samples": len(ok), "p90_input_tokens": model_market._percentile(ins, 90),
+            "p90_output_tokens": model_market._percentile(outs, 90)}
 
 
 def _average(values: list[int]) -> int | None:
@@ -202,9 +218,9 @@ def _facts(db: Session, user_id: int, since: Any, by_model: dict[str, dict[str, 
     answered: dict[str, int] = {}
     judged: dict[str, tuple[int, float | None]] = {}
     for name, workers in by_model.items():
-        rows = [r for items in workers.values() for r in items]
         # A fallback's answer came from another model: it proves nothing about the one that was asked.
-        sizes = [_size(r) + int(r.output_tokens or 0) for r in rows if r.status == "SUCCEEDED" and not r.fallback_used]
+        rows = [r for items in workers.values() for r in items if not r.fallback_used]
+        sizes = [_size(r) + int(r.output_tokens or 0) for r in rows if r.status == "SUCCEEDED"]
         answered[name] = max(sizes, default=0)
         verdicts = [r.structured_output_valid for r in rows if r.structured_output_valid is not None]
         judged[name] = (len(verdicts), round(100 * sum(verdicts) / len(verdicts), 1) if verdicts else None)
@@ -340,7 +356,7 @@ def _report(db: Session, user_id: int, snapshot: dict[str, Any], *, now: Any = N
     usable = _usable(db, user_id, snapshot)
     facts = _facts(db, user_id, since, by_model)
     platform = _platform_safely()
-    measured = {"workers": {w: model_market._tokens(items) for w, items in by_worker.items()}}
+    measured = {"workers": {w: _measured(items) for w, items in by_worker.items()}}
     workers: dict[str, Any] = {}
     for worker_type, worker in WORKERS.items():
         config = (snapshot.get("workers") or {}).get(worker_type) or {}
@@ -373,6 +389,8 @@ def _report(db: Session, user_id: int, snapshot: dict[str, Any], *, now: Any = N
             current_stats = _stats(everywhere) if len(everywhere) >= MIN_SAMPLES else None
         current_score = current_stats["score"] if current_stats else None
         entry["current_stats"] = current_stats
+        # The same model without the speed term, for evidence that has no latency this worker can use.
+        plain_score = _stats(own[current])["score"] if current in proven else current_score
 
         def beats(score: float | None, floor: float | None = current_score) -> bool:
             return score is not None and (floor is None or score >= floor + MARGIN)
@@ -385,19 +403,22 @@ def _report(db: Session, user_id: int, snapshot: dict[str, Any], *, now: Any = N
                                   "apply": _switch(snapshot, worker_type, model, current, proven_names, usable)
                                   if switchable else None})
         entry["suggestions"], entry["screened"] = _suggestions(
-            db, user_id, snapshot, worker_type, need, items, current, current_stats, beats, proven, proven_names,
-            by_model, usable, facts, platform)
+            db, user_id, snapshot, worker_type, need, items, current, lambda score: beats(score, plain_score),
+            proven, proven_names, by_model, usable, facts, platform)
     return {"window_days": WINDOW_DAYS, "min_samples": MIN_SAMPLES, "min_success_pct": MIN_SUCCESS_PCT,
             "workers": workers, "platform": bool(platform)}
 
 
 def _suggestions(db: Session, user_id: int, snapshot: dict[str, Any], worker_type: str,
-                 need: model_market.Requirements, items: list[Any], current: str | None,
-                 current_stats: dict[str, Any] | None, beats: Any, proven: dict[str, list[Any]],
+                 need: model_market.Requirements, items: list[Any], current: str | None, beats: Any,
+                 proven: dict[str, list[Any]],
                  proven_names: list[str], by_model: dict[str, dict[str, list[Any]]],
                  usable: dict[str, dict[str, Any]], facts: Facts,
                  platform: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Models this worker has not tried enough to rank, that pass every gate; and how many fell at which gate."""
+    """Models this worker has not tried enough to rank, that pass every gate; and how many fell at which gate.
+
+    `beats(score)` compares with the model in use on reliability and output quality only: the scores here come from
+    other workers' requests or other accounts, whose latency says nothing about this worker's prompts."""
     rejected: Counter[str] = Counter()
     candidates: dict[str, tuple[dict[str, Any], list[str]]] = {}
     for name, model in usable.items():
@@ -411,8 +432,6 @@ def _suggestions(db: Session, user_id: int, snapshot: dict[str, Any], worker_typ
     considered = len(candidates) + sum(rejected.values())
     sizes = [_size(r) for r in items if r.status == "SUCCEEDED" and _size(r)]
     comparable = COMPARABLE_SHARE * sum(sizes) / len(sizes) if sizes else 0
-    # Speed counts against the model in use only when that was measured on this worker's own requests.
-    baseline = current_stats.get("p95_ms") if current_stats and current in proven else None
     found: list[dict[str, Any]] = []
 
     def offer(name: str, basis: str, score: float, evidence: dict[str, Any]) -> None:
@@ -428,7 +447,7 @@ def _suggestions(db: Session, user_id: int, snapshot: dict[str, Any], worker_typ
         if len(rows) < MIN_SAMPLES:
             undecided.append(name)  # no comparable evidence in this account: the wider tiers may still speak
             continue
-        stats = _stats(rows, baseline)
+        stats = _stats(rows)
         if not _good(stats):
             rejected["LOW_SUCCESS"] += 1
         elif not beats(stats["score"]):

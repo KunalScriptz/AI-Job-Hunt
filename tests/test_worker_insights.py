@@ -196,6 +196,73 @@ def test_unknown_json_support_is_offered_only_once_the_models_own_answers_proved
     assert [(s["model"], s["flags"]) for s in worker["suggestions"]] == [("maybe", ["JSON_PROVEN"])]
 
 
+def test_a_fallbacks_valid_json_is_no_proof_for_the_model_that_was_asked(owner):
+    # 270 answers nobody judged, and 30 judged valid that a LiteLLM fallback gave: 90% success, no JSON of its own.
+    log(owner, "Groq", 30)
+    log(owner, "Groq", 20, status="FAILED", error="TIMEOUT")
+    log(owner, "maybe", 270, worker="REVIEWER")
+    log(owner, "maybe", 30, worker="REVIEWER", fallback_used=True, valid=True)
+    worker = report(owner)["workers"]["RANKER"]
+    assert "maybe" not in [s["model"] for s in worker["suggestions"]]
+    assert worker["screened"]["rejected"].get("STRUCTURED_OUTPUT_UNKNOWN") == 1
+
+
+def test_a_fallbacks_large_answer_is_no_proof_of_capacity(owner):
+    log(owner, "Groq", 30, tokens_in=20000, tokens_out=500)
+    log(owner, "Groq", 20, status="FAILED", error="TIMEOUT", tokens_in=20000)
+    log(owner, "router", 30, worker="REVIEWER", tokens_in=12000, tokens_out=500)  # comparable, but smaller
+    log(owner, "router", 3, worker="REVIEWER", tokens_in=30000, tokens_out=500, fallback_used=True)
+    worker = report(owner)["workers"]["RANKER"]
+    assert "router" not in [s["model"] for s in worker["suggestions"]]
+    assert worker["screened"]["rejected"].get("CONTEXT_UNKNOWN") == 1
+
+
+def test_prompts_the_provider_did_not_count_still_size_the_worker(owner):
+    # Ranker sends about 25,000 tokens, known only from our estimate. A 16K model that did well on 14K prompts
+    # elsewhere must not be offered: the registry minimum alone would have let it through.
+    log(owner, "Groq", 30, tokens_in=None, estimate=25000, tokens_out=500)
+    log(owner, "Groq", 20, status="FAILED", error="TIMEOUT", tokens_in=None, estimate=25000)
+    log(owner, "small16k", 40, worker="REVIEWER", tokens_in=14000, tokens_out=500)
+    snap = snapshot()
+    snap["models"]["small16k"] = dict(snap["models"]["steady"], context_window=16384)
+    with SessionLocal() as db:
+        worker = worker_insights.report(db, owner, snap)["workers"]["RANKER"]
+    assert worker["needs"]["typical_request_tokens"] == 25500 and worker["needs"]["context_tokens"] >= 25500
+    assert "small16k" not in [s["model"] for s in worker["suggestions"]]
+    assert worker["screened"]["rejected"].get("CONTEXT_TOO_SMALL", 0) >= 1
+
+
+def test_a_slower_equally_reliable_model_from_another_worker_is_not_called_better(owner):
+    # On this worker the model in use (200 ms) is slower than the fastest proven one (100 ms), which costs it score
+    # in "best". A 300 ms model from another worker must not look better just because it is measured against 200 ms.
+    log(owner, "steady", 30, latency=100)
+    log(owner, "Groq", 30, latency=200)
+    log(owner, "spare", 40, worker="REVIEWER", latency=300)
+    worker = report(owner)["workers"]["RANKER"]
+    assert worker["current_stats"]["score"] == 85.0  # the speed term, against the fastest model here
+    assert worker["suggestions"] == [] and worker["screened"]["rejected"]["NOT_BETTER"] == 1
+
+
+def test_a_more_reliable_model_from_another_worker_is_still_suggested_whatever_its_speed(owner):
+    log(owner, "Groq", 24, latency=100)
+    log(owner, "Groq", 6, status="FAILED", error="TIMEOUT")
+    log(owner, "spare", 40, worker="REVIEWER", latency=900)
+    worker = report(owner)["workers"]["RANKER"]
+    assert [(s["model"], s["basis"], s["score"]) for s in worker["suggestions"]] == [("spare", "OTHER_WORKERS", 100.0)]
+
+
+def test_platform_figures_are_compared_without_the_speed_term_too(owner, monkeypatch):
+    log(owner, "steady", 30, latency=100)
+    log(owner, "Groq", 30, latency=200)  # 100% reliable; 85 only because of speed
+    snap = snapshot()
+    snap["models"]["spare"].update(provider="groq", underlying_model="llama-x")
+    monkeypatch.setattr(worker_insights, "platform_model_stats", lambda **_: {
+        "groq/llama-x": {"success_pct": 96.0, "schema_valid_pct": None, "avg_ms": 300, "score": 97.6}})
+    with SessionLocal() as db:
+        worker = worker_insights.report(db, owner, snap)["workers"]["RANKER"]
+    assert "spare" not in [s["model"] for s in worker["suggestions"]]  # 97.6 does not beat a model that never failed
+
+
 def test_a_model_that_fails_often_is_never_suggested_even_with_nothing_to_compare_it_to(owner):
     # The model in use has no requests anywhere: "better than nothing measured" is not better.
     log(owner, "roomy", 21, worker="REVIEWER")
