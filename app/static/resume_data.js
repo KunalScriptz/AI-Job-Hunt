@@ -60,6 +60,11 @@ function rdApply(detail) {
 async function rdRun(action, success) {
   await settingsRun('resume-data', async () => { await action(); }, success);
 }
+// A version read before the new reader (no extraction record) whose PDF/DOCX is still stored can be read again.
+function rdCanReread(active, version) {
+  return !!(D.resumeData?.extraction_v2 && !active.extraction && version.has_original && /\.(pdf|docx)$/i.test(version.source_filename || ''));
+}
+
 function rdPost(path, body, success) {
   const active = rdActive();
   return rdRun(async () => { rdApply(await api(`/api/resumes/${active.id}/${path}`, { method: 'POST', body })); }, success);
@@ -399,7 +404,7 @@ function rdHeader() {
   const verify = verified ? btn('✓ Resume verified', 'rd-verify-resume', {}, 'good', true)
     : btn('Verify resume', 'rd-verify-resume', {}, next || unplaced ? '' : 'primary', locked || blocking.length > 0 || unplaced > 0);
   const version = (D.resumeData.versions || []).find(v => v.id === active.id) || active;
-  const menu = `<details class="rd-menu"><summary class="btn">More ▾</summary><div class="rd-menu-list">${btn('Re-parse (quick)', 'rd-reparse', { ai: 0 }, 'sm', locked)}${btn('Re-parse with AI', 'rd-reparse', { ai: 1 }, 'sm', locked || !!active.ai_parse?.active)}${version.has_original ? `<a class="btn sm" href="/api/resumes/${active.id}/original">Download original</a>` : ''}</div></details>`;
+  const menu = `<details class="rd-menu"><summary class="btn">More ▾</summary><div class="rd-menu-list">${btn('Re-parse (quick)', 'rd-reparse', { ai: 0 }, 'sm', locked)}${btn('Re-parse with AI', 'rd-reparse', { ai: 1 }, 'sm', locked || !!active.ai_parse?.active)}${rdCanReread(active, version) ? btn('Re-read file with the new reader', 'rd-reread', { id: active.id }, 'sm', locked) : ''}${version.has_original ? `<a class="btn sm" href="/api/resumes/${active.id}/original">Download original</a>` : ''}</div></details>`;
   const counts = [`${p.counts.VERIFIED} verified`, `${left} require review`, p.counts.EDITED ? `${p.counts.EDITED} edited` : '', p.counts.REJECTED ? `${p.counts.REJECTED} rejected` : ''].filter(Boolean).join(' · ');
   return `<section class="settings-group rd-header" id="rd-detail">
     <div class="row between gap10 wrap" style="align-items:flex-start"><div class="grow"><span class="settings-eyebrow">REVIEWING</span><div class="row gap8 wrap" style="align-items:center"><strong class="rd-title">${esc(active.name || 'Resume')} · v${active.version}</strong>${active.is_active ? pill('Active', 'good') : `${pill('Not active', 'muted')}${btn('Make active', 'rd-activate', { id: active.id }, 'sm ghost', locked)}`}${pill(statusLabel, tone)}</div></div><span class="settings-complete" data-rd-percent>${p.percent}% reviewed</span></div>
@@ -522,6 +527,11 @@ const RESUME_DATA_ACTIONS = {
   }, 'Resume verified'),
   // The AI parse runs in the background: it fills the data while nothing is reviewed, else it arrives as a comparison.
   'rd-reparse': el => { RD.decisions = {}; const ai = el.dataset.ai === '1'; return rdPost('reparse', { use_ai: ai }, ai ? 'Structuring with AI…' : 'Re-parse ready to compare'); },
+  // A new version from the same file; the one read before (and which resume is active) stays as it is.
+  'rd-reread': el => rdLeaveDraft() && rdRun(async () => {
+    const out = await api(`/api/resumes/${el.dataset.id}/reread`, { method: 'POST' });
+    RD.viewId = out.id; D.resumeData = await api(rdResumeUrl()); D.resumeChoices = null; RD.changes = null; RD.raw = null;
+  }, 'File read again: review the new version'),
   'rd-decide': el => { RD.decisions[el.dataset.change] = el.dataset.choice; render(); },
   'rd-resolve': el => {
     const decisions = el.dataset.all ? {} : { ...RD.decisions };

@@ -38,6 +38,7 @@ from app.services.structured_resume import (
     REVIEWED,
     StructuredResumeIn,
     Unit,
+    clean_raw_text,
     iter_units,
     materialize,
 )
@@ -384,6 +385,46 @@ def version_of_document(db: Session, profile: CandidateProfile, document: Resume
     if resume is not None:
         return resume
     return record_version(db, profile, document.extracted_text or "", document=document, activate=False)
+
+
+class RereadUnavailable(ValueError):
+    """The version's file cannot be read again with resume extraction V2."""
+
+
+def reread_file(db: Session, profile: CandidateProfile, resume: Resume, *, user_id: int) -> Resume:
+    """Read a version's own uploaded file again with resume extraction V2, as a new upload of that file would.
+
+    For a version read before V2 (it has no extraction record): its text came from the older reader, which keeps a
+    ligature glyph a font maps wrongly ("hCps" for "https") when it occurs only once. The result is a new version
+    (`record_version`), queued for AI structuring like any upload; the old version, its verified facts and the
+    active selection stay as they are. Explicit and per version: nothing re-reads files in bulk. Does not commit."""
+    from pathlib import Path
+
+    from app.services import document_text, resume_parsing
+    from app.services.resume_extraction import pipeline, store
+    from app.settings import get_settings
+
+    if store.record(db, resume.id) is not None:
+        raise RereadUnavailable("This resume was already read with the new reader")
+    if not resume_parsing.extraction_v2(db, user_id):
+        raise RereadUnavailable("Turn on “Read PDF uploads with the new reader” first")
+    if resume.source_media_type not in (document_text.PDF, document_text.DOCX):
+        raise RereadUnavailable("Only a PDF or DOCX file can be read again")
+    document = db.get(ResumeDocument, resume.resume_document_id) if resume.resume_document_id else None
+    root = (Path(get_settings().upload_dir) / str(user_id)).resolve()
+    path = Path(resume.source_storage_path or "").resolve() if resume.source_storage_path else None
+    if document is None or path is None or not path.is_file() or not path.is_relative_to(root):
+        raise RereadUnavailable("The original file is no longer available: upload it again")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != resume.source_file_hash:
+        raise RereadUnavailable("The stored file does not match this resume: upload it again")
+    extraction = pipeline.extract(resume.source_media_type, data, learned=store.learned(db, user_id))
+    text = clean_raw_text(extraction.text)
+    if not text.strip():
+        raise RereadUnavailable("No readable text was found in the file")
+    document.extracted_text = text
+    return record_version(db, profile, text, document=document, source="upload", name=resume.name,
+                          extraction=extraction)
 
 
 def save_text_version(db: Session, profile: CandidateProfile, text: str) -> Resume | None:
