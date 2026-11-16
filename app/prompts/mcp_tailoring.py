@@ -84,7 +84,10 @@ MCP_SERVER_INSTRUCTIONS = instructions(
     "route.who_applies is person is the candidate's to submit. find_jobs and get_job_documents find any job's "
     "documents; only an approved packet may be submitted. "
     "Follow-ups: list_followups_due → save_followup_draft → (the candidate says yes and the message is sent) → "
-    "record_followup_sent, or skip_followup. Job Hunt OS never sends a message.",
+    "record_followup_sent, or skip_followup. Job Hunt OS never sends a message. "
+    "Adding jobs found elsewhere: add_job or add_jobs_bulk with the posting's own title, company and text (never "
+    "invented); a duplicate comes back with the saved job's job_id. update_job corrects a job; archive_job puts one "
+    "away.",
     "Models: list_model_sources shows which catalogs answered; search_models lists models across OpenRouter, "
     "Groq, Ollama, LiteLLM's price list and the user's own gateway; suggest_models ranks them for a worker "
     "(e.g. RANKER) or use case with cost, latency, quality and reliability, compared with the model it uses now; "

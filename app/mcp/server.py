@@ -27,6 +27,7 @@ TOOL_NAMES = ("list_jobs_for_tailoring", "get_tailoring_context", "save_tailored
               "search_application_knowledge", "request_human_answer", "begin_application_submission",
               "release_application_claim", "record_application_result", "find_jobs", "get_job_documents",
               "list_followups_due", "save_followup_draft", "record_followup_sent", "skip_followup",
+              "add_job", "add_jobs_bulk", "update_job", "archive_job",
               "list_model_sources", "search_models", "suggest_models", "get_model_details")
 # Read-only tools about models, not about any job, application or follow-up: audited with no entity.
 NO_ENTITY_TOOLS = ("get_bulk_operation_status", "search_application_knowledge", "list_model_sources",
@@ -57,6 +58,8 @@ def run_tool(sessions: SessionFactory, user_id: int, name: str, handler: Callabl
             job_id = arguments.get("job_id") or next(
                 (a.get("job_id") for a in arguments.values() if isinstance(a, dict)), None)
             entity_type = None if name in NO_ENTITY_TOOLS else "job"
+            if name == "add_job" and isinstance(result.get("job_id"), int):
+                job_id = result["job_id"]  # the job it added, or the saved job it found
             if not isinstance(job_id, int):
                 # Follow-up tools name a follow-up or an application, never a job.
                 entity_type, job_id = next(((kind, arguments[key]) for key, kind in
@@ -333,6 +336,83 @@ def build_server(user_id: int, sessions: SessionFactory | None = None) -> MCPSer
     ) -> dict[str, Any]:
         """The candidate decided not to follow up: cancels the draft and clears the follow-up date."""
         return call("skip_followup", followup_id=followup_id, application_id=application_id, reason=reason)
+
+    # ───────────── adding and correcting jobs ─────────────
+
+    @server.tool()
+    def add_job(
+            apply_url: Annotated[str, Field(description=(
+                "The posting or application URL (http or https). Tracking parameters (utm_*, trackingId, refId) and "
+                "the #fragment are removed"))],
+            title: Annotated[str, Field(description="The job title as the posting states it (at most 300 characters)")],
+            company: Annotated[str, Field(description="The hiring company (at most 200 characters)")],
+            location: Annotated[str | None, Field(description="Where the job is, e.g. Bengaluru, India or Remote")] = None,
+            workplace_type: Annotated[str | None, Field(description="onsite, hybrid or remote")] = None,
+            description: Annotated[str | None, Field(description=(
+                "The posting text, plain or HTML (HTML is reduced to text); at most 50,000 characters. Copy it from "
+                "the posting: never write or summarise one"))] = None,
+            source: Annotated[str | None, Field(description=(
+                "Where it was found, e.g. builtin, workable, greenhouse, company_site (default: from the URL)"))] = None,
+            posted_at: Annotated[str | None, Field(description="When it was posted, ISO date, e.g. 2026-11-01")] = None,
+            salary: Annotated[str | None, Field(description="The salary as the posting states it, free text")] = None,
+            notes: Annotated[str | None, Field(description=(
+                "Why it was added, e.g. Matches FDE target; found on Built In"))] = None,
+            fetch_description: Annotated[bool, Field(description=(
+                "When no description is passed, read it from apply_url now (default true)"))] = True,
+    ) -> dict[str, Any]:
+        """Add a job found outside Job Hunt OS's own searches (Built In, a company careers page, Workable, Greenhouse,
+        Lever, Ashby...) to the pipeline, exactly where a job the candidate adds in Discovery goes: status discovered,
+        state DISCOVERED, kept by the domain filter, then description recovery, parsing and ranking in the
+        background. Never adds the same posting twice: the same URL, or the same company + title + city, returns
+        duplicate true with the saved job's job_id, status and state, and changes nothing. Without a description it
+        reads the posting over plain HTTP (the page's JobPosting data first, then its main content); when that fails
+        the job is still saved and a warning says the description is missing. fit_score is null until the ranker
+        scores it. ats and who_applies come from the URL (person: the candidate submits). Never applies."""
+        return call("add_job", apply_url=apply_url, title=title, company=company, location=location,
+                    workplace_type=workplace_type, description=description, source=source, posted_at=posted_at,
+                    salary=salary, notes=notes, fetch_description=fetch_description)
+
+    @server.tool()
+    def add_jobs_bulk(
+            jobs: Annotated[list[dict[str, Any]], Field(description=(
+                "Jobs, each with add_job's fields: {apply_url, title, company, location, workplace_type, description, "
+                "source, posted_at, salary, notes, fetch_description}. At most MCP_BULK_ADD_LIMIT (default 25)"))],
+    ) -> dict[str, Any]:
+        """Add several jobs as add_job does, each on its own: an invalid item is rejected with its error and the rest
+        are saved. Per item: index, ok, job_id, duplicate, status (the job's status, or REJECTED / ERROR) and error.
+        Returns an operation_id that get_bulk_operation_status reports. Never applies."""
+        return call("add_jobs_bulk", jobs=jobs)
+
+    @server.tool()
+    def update_job(
+            job_id: Annotated[int, Field(description="The job to correct, e.g. one add_job returned")],
+            title: Annotated[str | None, Field(description="Corrected title")] = None,
+            company: Annotated[str | None, Field(description="Corrected company")] = None,
+            location: Annotated[str | None, Field(description="Corrected location")] = None,
+            workplace_type: Annotated[str | None, Field(description="onsite, hybrid or remote")] = None,
+            description: Annotated[str | None, Field(description=(
+                "The full posting text, plain or HTML, copied from the posting (at most 50,000 characters)"))] = None,
+            apply_url: Annotated[str | None, Field(description="Corrected posting or application URL")] = None,
+            notes: Annotated[str | None, Field(description="Notes about the job (replaces the saved notes)")] = None,
+            posted_at: Annotated[str | None, Field(description="ISO date it was posted")] = None,
+            salary: Annotated[str | None, Field(description="The salary as the posting states it")] = None,
+    ) -> dict[str, Any]:
+        """Correct or enrich a saved job; only the fields passed change. A new description is parsed and the job is
+        ranked again (rescoring: queued, or not_queued with rescoring_reason). A job already applied to only takes
+        notes. A URL another saved job already has is refused. Never deletes, applies or changes a tailored packet."""
+        return call("update_job", job_id=job_id, title=title, company=company, location=location,
+                    workplace_type=workplace_type, description=description, apply_url=apply_url, notes=notes,
+                    posted_at=posted_at, salary=salary)
+
+    @server.tool()
+    def archive_job(
+            job_id: Annotated[int, Field(description="The job to put away")],
+            reason: Annotated[str, Field(description="Why, in a sentence (at most 500 characters)")],
+    ) -> dict[str, Any]:
+        """Archive a job as Discovery's Archive does: status archived, out of the queue and of ranking, kept for the
+        record and never deleted (the candidate can restore it in Discovery). Refused for a job with a tailored
+        packet or an application. Archiving twice changes nothing (already_archived true)."""
+        return call("archive_job", job_id=job_id, reason=reason)
 
     # ───────────── model market: read-only suggestions ─────────────
 

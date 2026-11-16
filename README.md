@@ -2492,6 +2492,7 @@ Optional limits, in `.env`:
 ```env
 MCP_BULK_TAILOR_LIMIT=10
 MCP_BULK_REVIEW_LIMIT=20
+MCP_BULK_ADD_LIMIT=25             # most jobs one add_jobs_bulk call adds
 MCP_APPLICATION_PAGE_LIMIT=50     # most jobs one list_jobs_for_application page returns
 MCP_PACKET_DIR=./data/packets     # where get_job_packet writes resume files for upload
 ```
@@ -2543,11 +2544,37 @@ In a new Claude Desktop chat, the tools menu should list **job-hunt-os**. Ask:
 Show me the available Job Hunt OS tools.
 ```
 
-You should see `list_jobs_for_tailoring`, `get_tailoring_context`, `save_tailored_resume`, `save_bulk_tailored_resumes`, `list_jobs_for_review`, `get_review_context`, `save_review`, `save_bulk_reviews`, `get_bulk_operation_status`, `list_jobs_for_application`, `get_job_packet`, `find_jobs`, `get_job_documents`, `search_application_knowledge`, `request_human_answer`, `begin_application_submission`, `release_application_claim`, `record_application_result`, `list_followups_due`, `save_followup_draft`, `record_followup_sent`, `skip_followup`, `list_model_sources`, `search_models`, `suggest_models` and `get_model_details`, plus the prompts `tailor_jobs`, `review_applications`, `apply_to_jobs` and `follow_up`. Then ask:
+You should see `list_jobs_for_tailoring`, `get_tailoring_context`, `save_tailored_resume`, `save_bulk_tailored_resumes`, `list_jobs_for_review`, `get_review_context`, `save_review`, `save_bulk_reviews`, `get_bulk_operation_status`, `list_jobs_for_application`, `get_job_packet`, `find_jobs`, `get_job_documents`, `search_application_knowledge`, `request_human_answer`, `begin_application_submission`, `release_application_claim`, `record_application_result`, `list_followups_due`, `save_followup_draft`, `record_followup_sent`, `skip_followup`, `add_job`, `add_jobs_bulk`, `update_job`, `archive_job`, `list_model_sources`, `search_models`, `suggest_models` and `get_model_details`, plus the prompts `tailor_jobs`, `review_applications`, `apply_to_jobs` and `follow_up`. Then ask:
 
 ```text
 Show me the top 5 jobs waiting for tailoring.
 ```
+
+### Adding jobs found elsewhere
+
+Jobs normally arrive through your saved searches. Claude can also add jobs it finds anywhere else — Built In, a company's careers page, Workable, Greenhouse, Lever, Ashby — and they go exactly where a job you add in Discovery goes:
+
+```text
+Add this job: https://builtin.com/job/forward-deployed-engineer-india/12152054 — Forward Deployed Engineer - India at Cursor.
+```
+
+```text
+add_job / add_jobs_bulk   → status discovered, state DISCOVERED, kept by the domain filter (you chose it)
+                          → description recovery (when it has none), parsing and ranking run in the background
+find_jobs                 → the fit score once the ranker has scored it
+update_job                → correct or enrich it; a new description is parsed and ranked again
+archive_job               → put it away (never deleted; restore it in Discovery)
+```
+
+| Tool | Returns / does |
+| --- | --- |
+| `add_job` | `apply_url`, `title` and `company` are required (http/https only; title ≤ 300, company ≤ 200, description ≤ 50,000 characters); `location`, `workplace_type` (`onsite`, `hybrid`, `remote`), `description` (plain text or HTML, reduced to text), `source` (default from the URL: `builtin`, `workable`, `greenhouse`, `lever`, `ashby`, … or `company_site`), `posted_at` (ISO date), `salary` (free text), `notes` and `fetch_description` (default true) are optional. The URL loses its tracking parameters (`utm_*`, `trackingId`, `refId`, `gh_src`, `lever-source`) and `#fragment`. Without a description, the posting is read once over plain HTTP — its JobPosting (JSON-LD) data first, then the site's own API or containers, then the page's main content — with every redirect checked against private addresses; a login wall, challenge, refusal or unreadable page is reported in `warnings` and the job is still saved. No browser and no model are used. Returns `job_id`, `duplicate`, `status`, `state`, `fit_score` (null until the ranker scores it in the background), `ats`, `who_applies`, `apply_url`, `description_chars` and `warnings`. |
+| Duplicates | A posting already saved — the same URL in any form (canonical URL, the stored posting or apply URL), or the same company + title + city (company suffixes such as Inc. ignored) — is never added again: `duplicate: true` with the saved job's `job_id`, `status`, `state` and `matched_by` (`url` or `dedupe_key`), and nothing changes. Use `update_job` to correct it. |
+| `add_jobs_bulk` | `jobs`: a list of `add_job` objects, at most `MCP_BULK_ADD_LIMIT` (default 25). Each item is validated and saved on its own; an invalid one is rejected with its `error` and the others are saved. Per item: `index`, `ok`, `job_id`, `duplicate`, `status` (the job's status, or `REJECTED` / `ERROR`) and `error`; overall `saved`, `created`, `duplicates`, `rejected` and an `operation_id` that `get_bulk_operation_status` reports. |
+| `update_job` | Changes only the fields passed: `title`, `company`, `location`, `workplace_type`, `description`, `apply_url`, `notes`, `posted_at`, `salary`. A new description is treated as your own text (recovery never replaces it), parsed again and the job queued for ranking again (`rescoring: queued`, or `not_queued` with `rescoring_reason`). A job already applied to only takes `notes`; a URL another saved job already has is refused. |
+| `archive_job` | `job_id` and `reason`. The same as Discovery's *Archive*: status `archived`, out of the queue and of ranking, kept for the record — never deleted, and it teaches the domain filter nothing. Refused for a job with a tailored packet or an application; archiving twice returns `already_archived: true`. |
+
+Notes, salary text and the archive reason are kept on the job under `raw.intake`. Posting pages are untrusted data: their text is stored, never followed. These tools never tailor, apply or send anything.
 
 ### Bulk tailoring workflow
 
@@ -2924,7 +2951,8 @@ JOBHUNT_MCP_TOKEN=jhos_mcp_... PYTHONPATH=$PWD .venv/bin/python -m app.mcp
 | No active resume | Add a master resume in Settings → Resumes |
 | No jobs waiting for tailoring | Jobs must be ranked and shortlisted (Discovery → triage). Check the ranking tracker for jobs still ranking |
 | Invalid evidence IDs | Use only IDs from `relevant_evidence` / `verified_evidence`. Unverified evidence must be verified in the Knowledge bank first |
-| Batch limit exceeded | Split the request, or raise `MCP_BULK_TAILOR_LIMIT` / `MCP_BULK_REVIEW_LIMIT` in `.env` |
+| Batch limit exceeded | Split the request, or raise `MCP_BULK_TAILOR_LIMIT` / `MCP_BULK_REVIEW_LIMIT` / `MCP_BULK_ADD_LIMIT` in `.env` |
+| New tools (e.g. `add_job`) missing in Claude Desktop | The server's tool list is read when Claude Desktop starts it. Quit Claude Desktop completely (⌘Q on macOS, not just the window) and reopen it; in Claude Code run `/mcp` and reconnect `job-hunt-os`. Check the tool list with *Show me the available Job Hunt OS tools* |
 | Save rejected by deterministic validation | Read the item's `errors` (code, location, message), fix only what is flagged, and save that item again. Don't add facts to get past validation. |
 
 ### Safety and data rules

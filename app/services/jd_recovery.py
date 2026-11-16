@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 import uuid
 from collections.abc import Callable, Collection
@@ -50,6 +51,8 @@ from app.services import (
 from app.services.lifecycle import ErrorCategory
 from app.services.lifecycle import WorkflowState as S
 from app.settings import get_settings
+
+log = logging.getLogger("jobhunt.jd_recovery")
 
 PENDING, PROCESSING, COMPLETED, FAILED, BLOCKED, SKIPPED = (
     "PENDING", "PROCESSING", "COMPLETED", "FAILED", "BLOCKED", "SKIPPED")
@@ -410,7 +413,7 @@ def _held(db: Session, claim_: FetchClaim) -> JobDescriptionFetchTask | None:
 class Snapshot:
     """What the pipeline needs from the job, read once so no database session is held while fetching."""
 
-    job_id: int
+    job_id: int | None  # None: a posting read before its job exists (fetch_posting)
     user_id: int
     url: str
     title: str
@@ -550,6 +553,43 @@ def _http_stage(snapshot: Snapshot) -> PageResult:
         html = response.text[:MAX_HTML]
     return _read_page(snapshot, html, status=response.status_code, final_url=current, method=HTTP,
                       redirects=redirects, extractor=jd_extractors.extractor_for(current))
+
+
+@dataclass
+class FetchedPosting:
+    """One synchronous read of a posting (fetch_posting): its description, or the result code saying why not."""
+
+    text: str = ""
+    method: str | None = None  # json_ld | api | selector | dom_score
+    code: str | None = None
+    final_url: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.text.strip())
+
+    @property
+    def message(self) -> str:
+        return message_for(self.code)
+
+
+def fetch_posting(url: str, *, user_id: int, title: str = "", company: str = "") -> FetchedPosting:
+    """Read a posting's description now, over plain HTTP only: the same checked redirects, extractors (JSON-LD, then
+    the site's own API or containers, then the main content block) and page classification as recovery's first
+    stage. Never opens a browser and never calls a model; a login wall, challenge, refusal or 429 is reported, not
+    retried. The text is the employer's posting: stored as text, never acted on. No database access."""
+    snapshot = Snapshot(job_id=None, user_id=user_id, url=url, title=title, company=company, attempt=1,
+                        use_browser=False, use_model=False)
+    try:
+        result = _http_stage(snapshot)
+    except Exception as exc:  # noqa: BLE001 - the caller saves the job anyway and says the description is missing
+        log.warning("Posting fetch failed for %s: %s", urlparse(url).hostname, type(exc).__name__)
+        return FetchedPosting(code="NETWORK_ERROR")
+    if result.kind == "found" and result.extraction is not None and result.extraction.found:
+        return FetchedPosting(text=result.extraction.text, method=result.extraction.method,
+                              final_url=result.final_url)
+    # "ambiguous" needs recovery's model stage to pick the block, so it is not guessed here.
+    return FetchedPosting(code=result.code or "EXTRACTION_FAILED", final_url=result.final_url)
 
 
 def _visible_host(url: str | None) -> str | None:

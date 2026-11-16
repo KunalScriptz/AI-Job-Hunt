@@ -4,6 +4,7 @@ Handlers only read and write through the application services. They take IDs, fi
 never SQL, file paths, shell input or settings, and they never return API keys or environment values. The only
 paths they return are the packet files get_job_packet and get_job_documents write under MCP_PACKET_DIR.
 No handler calls a model, and none sends a message: follow-ups are drafted by Claude and sent by the person.
+The only page a handler reads is a posting add_job is asked to read (HTTP only, through app.services.jd_recovery).
 """
 from __future__ import annotations
 
@@ -30,7 +31,15 @@ from app.prompts.mcp_followup import FOLLOWUP_RULES, MCP_FOLLOWUP_PROMPT_VERSION
 from app.prompts.mcp_review import MCP_REVIEW_PROMPT_VERSION, REVIEW_RULES
 from app.prompts.mcp_tailoring import HELD_BACK_NOTE, MCP_TAILORING_PROMPT_VERSION, TAILORING_RULES
 from app.prompts.tailoring import JOB_FIELDS, fit_analysis_input
-from app.services import apply_queue, approval, ats_map, conversation_actions, followups, knowledge
+from app.services import (
+    apply_queue,
+    approval,
+    ats_map,
+    conversation_actions,
+    followups,
+    job_intake,
+    knowledge,
+)
 from app.services import resume_verification as rv
 from app.services.context_builder import ContextError
 from app.services.ranker import policy_for, relevant_evidence
@@ -749,6 +758,101 @@ def record_application_result(db: Session, job_id: int, outcome: str, confirmati
     return {"ok": True, "status": "SUBMITTED", "job_id": job.id, "job_status": job.status,
             "applied_at": _iso(application.applied_at), "confirmation_id": application.confirmation_id,
             "followup_due_at": _iso(application.followup_due_at), "claimed": result.claimed}
+
+
+# ───────────── adding and correcting jobs ─────────────
+
+def add_limit() -> int:
+    return get_settings().mcp_bulk_add_limit
+
+
+FIT_SCORE_NOTE = ("fit_score is null until the ranker scores the job in the background (it uses a model); check it "
+                  "later with find_jobs")
+
+
+def _job_out(job: Job) -> dict[str, Any]:
+    where = route(job)
+    return {"job_id": job.id, "title": job.title, "company": job.company, "status": job.status,
+            "state": getattr(job.state, "value", job.state), "fit_score": job.fit_score, "ats": where["ats"],
+            "who_applies": where["who_applies"], "apply_url": apply_queue.apply_url(job),
+            "description_chars": len((job.description or "").strip())}
+
+
+def _added_out(added: job_intake.Added) -> dict[str, Any]:
+    out = {"ok": True, **_job_out(added.job), "duplicate": added.duplicate, "warnings": list(added.warnings)}
+    if added.duplicate:
+        out["matched_by"] = added.matched_by
+    elif out["fit_score"] is None:
+        out["warnings"].append(FIT_SCORE_NOTE)
+    return out
+
+
+def add_job(db: Session, apply_url: str, title: str, company: str, location: str | None = None,
+            workplace_type: str | None = None, description: str | None = None, source: str | None = None,
+            posted_at: str | None = None, salary: str | None = None, notes: str | None = None,
+            fetch_description: bool = True) -> dict[str, Any]:
+    fields = {"apply_url": apply_url, "title": title, "company": company, "location": location,
+              "workplace_type": workplace_type, "description": description, "source": source,
+              "posted_at": posted_at, "salary": salary, "notes": notes, "fetch_description": fetch_description}
+    try:
+        added = job_intake.add(db, {k: v for k, v in fields.items() if v is not None}, via="mcp")
+    except job_intake.Invalid as exc:
+        raise ToolError(str(exc)) from exc
+    return _added_out(added)
+
+
+def _add_one(db: Session, index: int, item: Any) -> dict[str, Any]:
+    try:
+        added = job_intake.add(db, item, via="mcp")
+    except job_intake.Invalid as exc:
+        return {"index": index, "ok": False, "job_id": None, "duplicate": False, "status": "REJECTED",
+                "error": str(exc)}
+    out = _added_out(added)
+    return {"index": index, "ok": True, "job_id": out["job_id"], "duplicate": out["duplicate"],
+            "status": out["status"], "state": out["state"], "title": out["title"], "company": out["company"],
+            "ats": out["ats"], "who_applies": out["who_applies"], "description_chars": out["description_chars"],
+            "error": None, **({"warnings": out["warnings"]} if out["warnings"] else {})}
+
+
+def add_jobs_bulk(db: Session, jobs: list[dict[str, Any]]) -> dict[str, Any]:
+    items = _check_batch(jobs, add_limit(), "MCP_BULK_ADD_LIMIT", "jobs")
+    out = []
+    for index, item in enumerate(items):
+        try:
+            out.append(_add_one(db, index, item))
+        except Exception:  # noqa: BLE001 - one broken item never stops the batch
+            db.rollback()
+            out.append({"index": index, "ok": False, "job_id": None, "duplicate": False, "status": "ERROR",
+                        "error": "Could not be saved; see the MCP server log"})
+    saved = sum(1 for r in out if r["ok"])
+    created = sum(1 for r in out if r["ok"] and not r["duplicate"])
+    return {"ok": True, "operation_id": str(uuid.uuid4()), "status": _operation_status(saved, len(out)),
+            "saved": saved, "created": created, "duplicates": saved - created, "rejected": len(out) - saved,
+            "note": FIT_SCORE_NOTE if created else None, "results": out}
+
+
+def update_job(db: Session, job_id: int, title: str | None = None, company: str | None = None,
+               location: str | None = None, workplace_type: str | None = None, description: str | None = None,
+               apply_url: str | None = None, notes: str | None = None, posted_at: str | None = None,
+               salary: str | None = None) -> dict[str, Any]:
+    job = _job(db, job_id)
+    fields = {"title": title, "company": company, "location": location, "workplace_type": workplace_type,
+              "description": description, "apply_url": apply_url, "notes": notes, "posted_at": posted_at,
+              "salary": salary}
+    try:
+        job, changed, rescoring = job_intake.update(db, job.id, fields, actor="mcp")
+    except (job_intake.Invalid, job_intake.IntakeError) as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, **_job_out(job), "changed": changed, **rescoring}
+
+
+def archive_job(db: Session, job_id: int, reason: str) -> dict[str, Any]:
+    job = _job(db, job_id)
+    try:
+        job, changed = job_intake.archive(db, job.id, reason, actor="mcp")
+    except job_intake.IntakeError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, **_job_out(job), "already_archived": not changed}
 
 
 # ───────────── follow-ups ─────────────

@@ -368,7 +368,10 @@ def older_than(posted_at: datetime | None, precision: str | None, reference: dat
 
 # ───────────── identity ─────────────
 
-TRACKING_PARAM = re.compile(r"^(utm_|trk|refid$|ref$|src$|source$|from$|clickid|gclid$|fbclid$|mc_)", re.I)
+# Click and campaign tracking (LinkedIn trackingId/refId, Greenhouse gh_src, Lever lever-source/lever-origin): never
+# part of a posting's identity.
+TRACKING_PARAM = re.compile(r"^(utm_|trk|trackingid$|refid$|ref$|src$|source$|from$|clickid|gclid$|fbclid$|mc_|gh_src$"
+                            r"|lever-source|lever-origin$)", re.I)
 URL_IDS = {
     "linkedin": re.compile(r"linkedin\.com/(?:comm/)?jobs/view/(?:[^/?#]*?-)?(\d{6,})", re.I),
     "indeed": re.compile(r"indeed\.[a-z.]+/.*[?&](?:jk|vjk)=([0-9a-f]{16})", re.I),

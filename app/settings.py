@@ -394,6 +394,8 @@ class Settings(BaseSettings):
     # Claude Desktop MCP server (app.mcp): the most jobs one context request or bulk save may cover.
     mcp_bulk_tailor_limit: int = 10
     mcp_bulk_review_limit: int = 20
+    # The most jobs one add_jobs_bulk call may add (app.services.job_intake).
+    mcp_bulk_add_limit: int = 25
     # Applying from Claude Desktop: the most jobs one list_jobs_for_application page returns, and where
     # get_job_packet writes the approved resume files for an ATS upload (one folder per account and job).
     mcp_application_page_limit: int = 50
