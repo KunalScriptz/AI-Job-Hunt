@@ -126,3 +126,52 @@ def test_another_accounts_version_is_not_found(user, monkeypatch):
     _v2(other)
     monkeypatch.setattr(auth, "authenticate", lambda request: CurrentUser(other, f"{other}@jobhunt.test", False))
     assert client.post(f"/api/resumes/{old}/reread").status_code == 404
+
+
+# ───────────── review findings (PR 147) ─────────────
+
+def test_rereading_the_active_resume_keeps_its_download(user):
+    old = _upload()
+    _v2(user)
+    assert client.get("/api/profile/resume").status_code == 200
+    assert client.post(f"/api/resumes/{old}/reread").status_code == 200
+    assert client.get("/api/profile/resume").status_code == 200, "the active version still uses the shared file"
+
+
+def test_a_file_removed_from_the_library_can_still_be_reread(user):
+    out = client.post("/api/profile/resume", files={"file": (
+        "ana.pdf", io.BytesIO((DOCS / "ana-single-actualtext.pdf").read_bytes()), "application/pdf")}).json()
+    _v2(user)
+    assert client.delete(f"/api/profile/resumes/{out['id']}").status_code == 200
+    assert client.get(f"/api/resumes/{out['resume_id']}/original").status_code == 200
+    reread = client.post(f"/api/resumes/{out['resume_id']}/reread")
+    assert reread.status_code == 200, reread.text
+    new = reread.json()["id"]
+    assert new != out["resume_id"] and reread.json()["has_original"]
+    with _db(user) as db:
+        created, old = db.get(Resume, new), db.get(Resume, out["resume_id"])
+        assert "Apache Kafka" in created.raw_text and _record(db, new) is not None
+        assert (created.source_storage_path, created.source_file_hash) == (old.source_storage_path,
+                                                                           old.source_file_hash)
+    assert client.get(f"/api/resumes/{new}/original").status_code == 200
+
+
+def test_same_text_offers_the_new_structure_as_a_comparison(user):
+    """A paragraph-only Word file reads to the same text, so its version is kept; the new reader's sections still find
+    bullets the old parse missed, and they are offered for review, never applied on their own."""
+    docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    out = client.post("/api/profile/resume", files={"file": (
+        "ana.docx", io.BytesIO((DOCS / "ana.docx").read_bytes()), docx)}).json()
+    with _db(user) as db:
+        before = db.get(Resume, out["resume_id"]).structured_data
+    _v2(user)
+    reread = client.post(f"/api/resumes/{out['resume_id']}/reread")
+    assert reread.status_code == 200, reread.text
+    body = reread.json()
+    assert body["id"] == out["resume_id"], "the same text keeps its version"
+    assert body["extraction"] is not None
+    proposed = " ".join(str(c["proposed"]) for c in body["pending_reparse"]["changes"])
+    assert "Architected a Kafka streaming platform" in proposed
+    with _db(user) as db:
+        assert db.get(Resume, out["resume_id"]).structured_data == before, "offered, not applied"
+    assert client.post(f"/api/resumes/{out['resume_id']}/reread").status_code == 409

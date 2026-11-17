@@ -531,7 +531,7 @@ const RESUME_DATA_ACTIONS = {
   'rd-reread': el => rdLeaveDraft() && rdRun(async () => {
     const out = await api(`/api/resumes/${el.dataset.id}/reread`, { method: 'POST' });
     RD.viewId = out.id; D.resumeData = await api(rdResumeUrl()); D.resumeChoices = null; RD.changes = null; RD.raw = null;
-  }, 'File read again: review the new version'),
+  }, 'File read again with the new reader: review it'),
   'rd-decide': el => { RD.decisions[el.dataset.change] = el.dataset.choice; render(); },
   'rd-resolve': el => {
     const decisions = el.dataset.all ? {} : { ...RD.decisions };
