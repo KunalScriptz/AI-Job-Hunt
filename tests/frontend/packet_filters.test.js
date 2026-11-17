@@ -92,4 +92,17 @@ describe('Packet filter bar', () => {
     expect(ui.S.rangeError).toBe('Use whole numbers from 0 to 100.');
     expect(ui.S.pf.approvals.max_fit).toBe(0);
   });
+
+  it('refuses an entered "To" of 0 instead of reading it as no limit', () => {
+    ui.S.rangeEdit = { scope: 'approvals', field: 'fit' };
+    let root = view();
+    root.querySelector('#range-lo').value = '60'; root.querySelector('#range-hi').value = '0';
+    ui.A['range-apply']();
+    expect(ui.S.rangeError).toBe('Leave “To” empty for no upper limit, or use 1–100.');
+    expect([ui.S.pf.approvals.min_fit, ui.S.rangeEdit]).toEqual([0, { scope: 'approvals', field: 'fit' }]);
+    root = view();
+    root.querySelector('#range-lo').value = '60'; root.querySelector('#range-hi').value = '';
+    ui.A['range-apply']();
+    expect([ui.S.pf.approvals.min_fit, ui.S.pf.approvals.max_fit, ui.S.rangeEdit]).toEqual([60, 0, null]);
+  });
 });

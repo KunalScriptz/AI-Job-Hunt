@@ -54,8 +54,11 @@ def cited_evidence_ids(lines: Iterable[str]) -> set[int]:
 def readable(line: str, requirements: Mapping[str, str], evidence: Mapping[int, str]) -> str:
     text = str(line)
     lead = _LEADING_REQ.match(text)
-    if lead and lead.group(1).lower() in requirements:
-        text = text[lead.end():]  # the words follow the id already
+    if lead and (name := requirements.get(lead.group(1).lower())):
+        rest = text[lead.end():]
+        # Drop the id only when the requirement's words already follow it; otherwise name the requirement.
+        text = rest if " ".join(name.lower().split()) in " ".join(rest.lower().split()) \
+            else f"“{_short(name)}”: {rest}"
     text = _REQ.sub(lambda m: f"“{_short(requirements[m.group(1).lower()])}”"
                     if m.group(1).lower() in requirements else m.group(0), text)
 

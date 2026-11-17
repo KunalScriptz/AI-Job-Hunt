@@ -10,6 +10,13 @@ def test_a_leading_requirement_id_is_dropped_when_its_words_follow():
         == "Timestamps and numeric precision - no evidence"
 
 
+def test_a_leading_requirement_id_is_named_when_its_words_do_not_follow():
+    assert readable("req_024: No supporting evidence found", REQS, EVIDENCE) \
+        == "“Timestamps and numeric precision”: No supporting evidence found"
+    assert readable("REQ_024 - timestamps  and numeric precision missing", REQS, EVIDENCE) \
+        == "timestamps  and numeric precision missing"
+
+
 def test_an_inline_requirement_id_becomes_its_text_and_an_unknown_one_stays():
     assert readable("Gap on req_034 and req_099", REQS, EVIDENCE) \
         == "Gap on “Financial or market data experience” and req_099"

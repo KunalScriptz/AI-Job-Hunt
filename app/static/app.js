@@ -2861,10 +2861,14 @@ const A = {
   'pf-reset': (el, e) => { e?.preventDefault(); S.pf[el.dataset.kind] = pfDefaults(el.dataset.kind); load(); },
   'range-cancel': () => { S.rangeEdit = null; S.rangeError = ''; render(); },
   'range-apply': () => {
-    const read = id => { const v = document.getElementById(id)?.value.trim(); return v === '' || v == null ? 0 : Number(v); };
+    // 0 means "no limit" throughout the filters, so an entered "To" of 0 is refused rather than read as no limit.
+    const raw = id => (document.getElementById(id)?.value ?? '').trim();
+    const read = id => raw(id) === '' ? 0 : Number(raw(id));
     const lo = read('range-lo'), hi = read('range-hi');
     const bad = [lo, hi].some(v => !Number.isInteger(v) || v < 0 || v > 100);
-    S.rangeError = bad ? 'Use whole numbers from 0 to 100.' : lo && hi && lo > hi ? '“From” must not be above “To”.' : '';
+    S.rangeError = bad ? 'Use whole numbers from 0 to 100.'
+      : raw('range-hi') !== '' && hi === 0 ? 'Leave “To” empty for no upper limit, or use 1–100.'
+        : lo && hi && lo > hi ? '“From” must not be above “To”.' : '';
     if (S.rangeError) { render(); return; }
     const { scope, field } = S.rangeEdit; S.rangeError = ''; setRange(scope, field, lo, hi);
   },
