@@ -210,12 +210,25 @@ describe('Jobs · modern filter bar', () => {
     ui.D.jobs = jobs([row(1, 80)]);
     ui.S.filters = ui.freshFilters();
     let root = view();
-    for (const id of ['flt-date', 'flt-min', 'flt-stage']) expect(root.querySelector(`#${id}`).classList.contains('on')).toBe(false);
+    for (const id of ['flt-date', 'flt-fit', 'flt-stage']) expect(root.querySelector(`#${id}`).classList.contains('on')).toBe(false);
     expect(root.querySelector('[data-act="toggle-more-filters"]').classList.contains('on')).toBe(false);
     expect(root.querySelector('.filter-count')).toBeNull();
     ui.S.filters = { ...ui.freshFilters(), min_fit: 70, stage: 'shortlisted', within: '7d' };
     root = view();
-    for (const id of ['flt-date', 'flt-min', 'flt-stage']) expect(root.querySelector(`#${id}`).classList.contains('on')).toBe(true);
+    for (const id of ['flt-date', 'flt-fit', 'flt-stage']) expect(root.querySelector(`#${id}`).classList.contains('on')).toBe(true);
+  });
+
+  it('offers both fit bounds in one pill and shows a range it cannot pick as its own option', () => {
+    ui.D.jobs = jobs([row(1, 80)]);
+    ui.S.filters = { ...ui.freshFilters(), max_fit: 50 };
+    let pill = view().querySelector('#flt-fit');
+    expect([...pill.options].map(o => o.textContent)).toEqual(['Any fit', 'Fit ≥ 50', 'Fit ≥ 70', 'Fit ≥ 80', 'Fit ≤ 30', 'Fit ≤ 50', 'Fit ≤ 70', 'Custom range…']);
+    expect(pill.value).toBe('max:50');
+    expect(pill.classList.contains('on')).toBe(true);
+    ui.S.filters = { ...ui.freshFilters(), min_fit: 50, max_fit: 69 };
+    pill = view().querySelector('#flt-fit');
+    expect(pill.value).toBe('range');
+    expect(pill.selectedOptions[0].textContent).toBe('Fit 50–69');
   });
 
   it('keeps search, sort and Rank unranked together, apart from the filter pills', () => {
@@ -225,7 +238,7 @@ describe('Jobs · modern filter bar', () => {
     expect(find.querySelector('#flt-q')).not.toBeNull();
     expect(find.querySelector('#flt-sort')).not.toBeNull();
     expect(find.querySelector('[data-act="rank-batch"]')).not.toBeNull();
-    expect(root.querySelector('.filter-pills #flt-min')).not.toBeNull();
+    expect(root.querySelector('.filter-pills #flt-fit')).not.toBeNull();
   });
 
   it('groups the panel and keeps every filter control', () => {
@@ -236,7 +249,7 @@ describe('Jobs · modern filter bar', () => {
     expect([...root.querySelectorAll('#flt-more .filter-group-name')].map(n => n.textContent))
       .toEqual(['Role', 'Source', 'Match', 'Must mention', 'Quick toggles']);
     expect([...root.querySelectorAll('#flt-more select')].map(s => s.dataset.filter))
-      .toEqual(['location', 'work_mode', 'job_type', 'board', 'setup_id', 'max_fit', 'domain', 'description']);
+      .toEqual(['location', 'work_mode', 'job_type', 'board', 'setup_id', 'domain', 'description']);
     expect(root.querySelector('#flt-more #flt-keywords')).not.toBeNull();
   });
 

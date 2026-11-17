@@ -8,7 +8,8 @@ from __future__ import annotations
 from app.prompts.common import UNTRUSTED_DATA_RULE, instructions
 
 # v2: a claim is never assumed true because the tailored resume states it.
-MCP_REVIEW_PROMPT_VERSION = "v2"
+# v3: notes name requirements and facts in words, never by id.
+MCP_REVIEW_PROMPT_VERSION = "v3"
 
 REVIEW_RULES = (
     "Act as a skeptical hiring manager checking a tailored resume before it is sent.",
@@ -17,6 +18,8 @@ REVIEW_RULES = (
     ("Check factual accuracy against candidate_profile and verified_evidence: list every claim they do not support "
      "in unsupported_claims and every exaggeration in overstated_claims."),
     "List job requirements the resume does not address in missing_requirements, and other concerns in risks.",
+    ("Your lists are read by the candidate: name a requirement by its words and a fact by what it says, never by "
+     "an id such as req_012 or evidence 5."),
     "Check candidate_policy: work authorization statements must match it exactly.",
     "recommendation is PASS, RETAILOR or SKIP. It is advice: Job Hunt OS decides the job's state.",
     "Do not rewrite the resume while reviewing.",

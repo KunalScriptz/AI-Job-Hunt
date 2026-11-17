@@ -279,6 +279,17 @@ mark.m-gap{background:#fff3e0;color:var(--warn);padding:0 2px;border-radius:3px}
 .filter-chips .chip button:hover{opacity:1;background:var(--brand-soft)}
 .filter-chips .chip button:focus-visible{opacity:1;outline:2px solid var(--brand);outline-offset:1px}
 .filter-chips a{margin-left:4px}
+.packet-filters{border-bottom:0}
+.pf-status{display:flex;gap:2px;padding:0 14px;margin-bottom:10px;border-bottom:1px solid var(--line3);overflow-x:auto;scrollbar-width:none}
+.pf-tab{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;padding:8px 12px 9px;margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:500;white-space:nowrap;cursor:pointer;transition:color .12s,border-color .12s}
+.pf-tab:hover{color:var(--ink2)}
+.pf-tab.on{color:var(--brand-ink);border-bottom-color:var(--brand);font-weight:600}
+.pf-tab:focus-visible{outline:2px solid var(--brand);outline-offset:-2px;border-radius:6px}
+.range-row{align-items:flex-end;flex-wrap:wrap}
+.range-panel .range-input{width:96px;font-variant-numeric:tabular-nums}
+.range-dash{padding-bottom:8px;color:var(--muted)}
+.pf-tab-count{display:inline-grid;place-items:center;min-width:20px;padding:1px 6px;border-radius:99px;background:var(--soft);color:var(--muted);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+.pf-tab.on .pf-tab-count,.filter-toggle.on .pf-tab-count{background:var(--brand-soft);color:var(--brand-ink)}
 @media (max-width:600px){
   .filter-group{grid-template-columns:minmax(0,1fr);gap:8px}
   .filter-pills .grow{display:none}
