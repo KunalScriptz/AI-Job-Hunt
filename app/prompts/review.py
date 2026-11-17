@@ -33,7 +33,8 @@ from app.prompts.contracts import REVIEW_RECOMMENDATIONS, ReviewResult, describe
 # evidence ids); the posting arrives without duplicate paragraphs or legal boilerplate.
 # v4: the shared ReviewResult contract (PASS / RETAILOR / SKIP), per-claim evidence checks, no search configuration.
 # requirements with "alternatives" (one of Python, Java or Go): any one of them meets it.
-REVIEW_PROMPT_VERSION = "v6"
+# v7: notes are read by a person: name requirements and facts in words, never by their prompt ids.
+REVIEW_PROMPT_VERSION = "v7"
 REVIEW_MARKER = "REVIEW_RESUME"
 __all__ = ["REVIEW_PROMPT_VERSION", "REVIEW_RECOMMENDATIONS", "build_review_prompt"]
 # The candidate policy flags a reviewer checks claims against.
@@ -53,6 +54,8 @@ REVIEW_SYSTEM = instructions(
     allow it, is unsupported; work authorization statements must match CANDIDATE exactly;
   - REQUIRED requirements the resume does not address: unaddressed_requirements;
   - vague bullets and inconsistencies: risks.""",
+    "Every list item is read by the candidate: name a requirement by its words and a fact by what it says (a short "
+    "quote), never by an id such as req_012 or evidence 5.",
     "recommendation: PASS when it can be sent, RETAILOR when tailoring again can fix it, SKIP when it should not be "
     "sent. It is advice: the application decides.",
     REQUIREMENT_LEVELS_RULE,

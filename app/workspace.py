@@ -62,6 +62,7 @@ from app.services import (
     resume_length,
     resume_matching,
     resume_verification,
+    review_text,
 )
 from app.services import followups as followup_service
 from app.services.actors import (
@@ -2031,37 +2032,43 @@ PACKET_SORTS = {
 
 def filter_packet_rows(rows: list[dict], *, q: str, min_fit: int, min_review: int, board: str, status: str,
                        sort: str, status_filters: dict, with_facets: bool, location: str = "all",
-                       easy_apply_only: bool = False):
+                       easy_apply_only: bool = False, max_fit: int = 0, max_review: int = 0):
     """Filter and sort Tailor or Approvals rows. The unfiltered order is kept for sort="" (the screen's default).
 
     Returns the plain list unless `with_facets`, which adds totals and the boards and locations present before
-    filtering.
+    filtering, and how many of the otherwise-filtered rows each status filter would show.
+    `max_fit` and `max_review` are inclusive and leave out unscored jobs, as Discovery's fit bound does.
     """
     if status not in ("all", "") and status not in status_filters:
         raise HTTPException(422, f"Unknown status filter: {status}")
     if sort not in ("", "default") and sort not in PACKET_SORTS:
         raise HTTPException(422, f"Unknown sort: {sort}")
     needle = q.lower().strip()
-    out = [r for r in rows
-           if (not needle or needle in f"{r['title']} {r['company']} {r['location']}".lower())
-           and (not min_fit or (r["fit"] or 0) >= min_fit)
-           and (not min_review or (r["reviewer_score"] or 0) >= min_review)
-           and (board in ("all", "") or r["board"] == board)
-           and (location in ("all", "") or location_key(r["location"]) == location)
-           and (not easy_apply_only or r.get("easy_apply"))
-           and (status in ("all", "") or status_filters[status](r))]
+    matching = [r for r in rows
+                if (not needle or needle in f"{r['title']} {r['company']} {r['location']}".lower())
+                and (not min_fit or (r["fit"] or 0) >= min_fit)
+                and (not max_fit or (r["fit"] is not None and r["fit"] <= max_fit))
+                and (not min_review or (r["reviewer_score"] or 0) >= min_review)
+                and (not max_review or (r["reviewer_score"] is not None and r["reviewer_score"] <= max_review))
+                and (board in ("all", "") or r["board"] == board)
+                and (location in ("all", "") or location_key(r["location"]) == location)
+                and (not easy_apply_only or r.get("easy_apply"))]
+    out = [r for r in matching if status in ("all", "") or status_filters[status](r)]
     if sort in PACKET_SORTS:
         out.sort(key=PACKET_SORTS[sort], reverse=sort == "new")
     if not with_facets:
         return out
     return {"items": out, "total": len(out), "total_all": len(rows), "boards": sorted({r["board"] for r in rows}),
             "locations": location_facets([r["location"] for r in rows]),
-            "easy_apply": sum(1 for r in rows if r.get("easy_apply"))}
+            "easy_apply": sum(1 for r in rows if r.get("easy_apply")),
+            "status_counts": {"all": len(matching), **{k: sum(1 for r in matching if test(r))
+                                                       for k, test in status_filters.items()}}}
 
 
 @router.get("/api/tailor/queue")
-def tailor_queue(q: str = "", min_fit: int = 0, min_review: int = 0, board: str = "all", location: str = "all",
-                 status: str = "all", sort: str = "fit", with_facets: bool = False, db: Session = Depends(get_user_db)):
+def tailor_queue(q: str = "", min_fit: int = 0, max_fit: int = 0, min_review: int = 0, max_review: int = 0,
+                 board: str = "all", location: str = "all", status: str = "all", sort: str = "fit",
+                 with_facets: bool = False, db: Session = Depends(get_user_db)):
     # AI-ranked jobs only reach Tailor once you have confirmed the shortlist in triage.
     jobs = db.scalars(select(Job).where(or_(and_(Job.status.in_(AWAITING_TAILORING_STATUSES),
                                                  Job.triaged_at.is_not(None)),
@@ -2087,7 +2094,7 @@ def tailor_queue(q: str = "", min_fit: int = 0, min_review: int = 0, board: str 
                      "review_reasons": ((resume.reviewer_notes or {}).get("decision_reasons") or [])[:3] if resume else []})
     return filter_packet_rows(rows, q=q, min_fit=min_fit, min_review=min_review, board=board, status=status, sort=sort,
                               status_filters=TAILOR_STATUS_FILTERS, with_facets=with_facets,
-                              location=location)
+                              location=location, max_fit=max_fit, max_review=max_review)
 
 
 def packet(db: Session, job: Job) -> dict:
@@ -2103,6 +2110,9 @@ def packet(db: Session, job: Job) -> dict:
     review = ([{"tone": "good", "text": s} for s in notes.get("strengths") or []]
               + [{"tone": "warn", "text": s} for s in notes.get("improvements") or []]
               + [{"tone": "bad", "text": s} for s in notes.get("reject_reasons") or []])
+    # A reviewer may cite "req_024" or "evidence IDs (127, 129)": show what they stand for.
+    for item, text in zip(review, review_text.readable_lines(db, job, [r["text"] for r in review]), strict=True):
+        item["text"] = text
     return {**base, "resume": {
         "id": resume.id, "version": resume.version, "created_at": resume.created_at.isoformat(),
         "generated": ago(resume.created_at), "reviewer_score": resume.reviewer_score, "markdown": resume.markdown,
@@ -2167,8 +2177,9 @@ APPROVAL_QUEUE_STATUSES = ("tailored", "pending_approval", "approved", "rejected
 
 
 @router.get("/api/approvals")
-def approvals(q: str = "", min_fit: int = 0, min_review: int = 0, board: str = "all", location: str = "all",
-              status: str = "all", sort: str = "default", easy_apply_filter: str = Query("all", alias="easy_apply"),
+def approvals(q: str = "", min_fit: int = 0, max_fit: int = 0, min_review: int = 0, max_review: int = 0,
+              board: str = "all", location: str = "all", status: str = "all", sort: str = "default",
+              easy_apply_filter: str = Query("all", alias="easy_apply"),
               with_facets: bool = False, db: Session = Depends(get_user_db)):
     if easy_apply_filter not in ("all", "", "only"):
         raise HTTPException(422, f"Unknown easy_apply filter: {easy_apply_filter}")
@@ -2189,7 +2200,8 @@ def approvals(q: str = "", min_fit: int = 0, min_review: int = 0, board: str = "
     rows.sort(key=lambda r: (not r["starred"], not r["waiting"], r["status"] == "approved"))
     return filter_packet_rows(rows, q=q, min_fit=min_fit, min_review=min_review, board=board, status=status, sort=sort,
                               status_filters=APPROVAL_STATUS_FILTERS, with_facets=with_facets,
-                              location=location, easy_apply_only=easy_apply_filter == "only")
+                              location=location, easy_apply_only=easy_apply_filter == "only", max_fit=max_fit,
+                              max_review=max_review)
 
 
 @router.get("/api/approvals/{job_id}")

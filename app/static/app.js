@@ -8,7 +8,7 @@ const attr = esc;
 
 /* ───────────── state ───────────── */
 // Filters on the Tailor and Approvals screens, sent to /api/tailor/queue and /api/approvals.
-function pfDefaults(kind) { return { q: '', min_fit: 0, min_review: 0, board: 'all', location: 'all', status: 'all', ...(kind === 'approvals' ? { easy_apply: 'all' } : {}), sort: kind === 'tailor' ? 'fit' : 'default' }; }
+function pfDefaults(kind) { return { q: '', min_fit: 0, max_fit: 0, min_review: 0, max_review: 0, board: 'all', location: 'all', status: 'all', ...(kind === 'approvals' ? { easy_apply: 'all' } : {}), sort: kind === 'tailor' ? 'fit' : 'default' }; }
 // Discovery table filters, sent to /api/jobs/search. The date filter is one of: within (last N), older_than, a
 // date_from–date_to range, or posted_unknown (Posted only); date_field says which date they look at.
 const DEFAULT_FILTERS = { q: '', min_fit: 0, max_fit: 0, board: 'all', location: 'all', stage: 'all', description: 'all', domain: 'matching',
@@ -899,7 +899,7 @@ function activeFilters(j) {
   if (dateMode(f) !== 'any' && (DATE_KEYS.some(k => f[k]))) add(DATE_KEYS, dateLabel(f));
   if (f.min_fit) add(['min_fit'], `Fit ≥ ${f.min_fit}`);
   if (f.stage && f.stage !== 'all') add(['stage'], f.stage === 'unranked' ? 'Unranked' : statusTitle(f.stage));
-  if (f.max_fit) add(['max_fit'], `Fit ≤ ${f.max_fit}`, true);
+  if (f.max_fit) add(['max_fit'], `Fit ≤ ${f.max_fit}`);
   if (f.board && f.board !== 'all') add(['board'], f.board, true);
   if (f.location && f.location !== 'all') add(['location'], name(locationOptions(j.locations), f.location), true);
   if (f.domain && f.domain !== 'matching') add(['domain'], f.domain === 'all' ? 'Any domain' : 'Not matching', true);
@@ -918,7 +918,6 @@ const titleCase = s => String(s).replace(/(^|[\s-])(\w)/g, (m, a, b) => a + b.to
 function filterBar(j, opts) {
   const f = S.filters, active = activeFilters(j), moreCount = active.filter(a => a.more).length;
   const hasDate = DATE_KEYS.some(k => f[k]);
-  const fitCaps = [[0, 'Any'], [49, 'Below 50'], [69, 'Below 70'], [79, 'Below 80']];
   // A real checkbox inside a pill, so the shared data-filter handler and the keyboard work as on any checkbox.
   const toggle = (key, text, title = '') => `<label class="filter-toggle ${f[key] ? 'on' : ''}" ${title ? `title="${attr(title)}"` : ''}><input type="checkbox" id="flt-${key.replace(/_/g, '-')}" data-filter="${key}" ${f[key] ? 'checked' : ''}><span class="filter-toggle-mark" aria-hidden="true">✓</span>${text}</label>`;
   const field = (text, control) => `<label class="field xs">${text}${control}</label>`;
@@ -933,12 +932,13 @@ function filterBar(j, opts) {
     </div>
     <div class="filter-pills">
       <button type="button" class="filter-pill ${hasDate ? 'on' : ''}" id="flt-date" data-act="date-pop" aria-expanded="${S.datePop}" aria-controls="flt-date-panel"><span aria-hidden="true">◷</span>${esc(dateLabel(f))}<span class="filter-caret" aria-hidden="true">${S.datePop ? '▴' : '▾'}</span></button>
-      <select class="select filter-pill ${f.min_fit ? 'on' : ''}" id="flt-min" data-filter="min_fit" aria-label="Minimum fit">${opts([[0, 'Any fit'], [50, 'Fit ≥ 50'], [70, 'Fit ≥ 70'], [80, 'Fit ≥ 80']], f.min_fit)}</select>
+      ${rangePill('discovery', 'fit', 'flt-fit')}
       <select class="select filter-pill ${stage !== 'all' ? 'on' : ''}" id="flt-stage" data-filter="stage" aria-label="Stage">${opts([['all', 'All stages'], ['unranked', 'Unranked'], ...['discovered', 'shortlisted', 'maybe', 'archived', 'dismissed', 'tailored', 'needs_retailor', 'pending_approval', 'approved', 'applied'].map(s => [s, statusTitle(s)])], f.stage)}</select>
       <span class="grow"></span>
       <button type="button" class="filter-pill ${S.moreFilters || moreCount ? 'on' : ''}" data-act="toggle-more-filters" aria-expanded="${S.moreFilters}" aria-controls="flt-more">More filters${moreCount ? `<span class="filter-count" aria-label="${moreCount} active">${moreCount}</span>` : ''}<span class="filter-caret" aria-hidden="true">${S.moreFilters ? '▴' : '▾'}</span></button>
     </div>
     ${S.datePop ? datePopover(f) : ''}
+    ${rangeEditor('discovery')}
     ${S.moreFilters ? `<div class="filter-more" id="flt-more">
       ${group('Role', `
         ${field('Location', `<select class="select" id="flt-location" data-filter="location">${opts(locationOptions(j.locations || []), f.location)}</select>`)}
@@ -948,7 +948,6 @@ function filterBar(j, opts) {
         ${field('Board', `<select class="select" id="flt-board" data-filter="board">${opts([['all', 'All boards'], ...(j.boards || []).map(b => [b, b])], f.board)}</select>`)}
         ${field('Search setup', `<select class="select" id="flt-setup" data-filter="setup_id">${opts([['', 'Any setup'], ...(j.setups || [])], f.setup_id)}</select>`)}`)}
       ${group('Match', `
-        ${field('Fit up to', `<select class="select" id="flt-max" data-filter="max_fit">${opts(fitCaps, f.max_fit)}</select>`)}
         ${field('Domain', `<select class="select" id="flt-domain" data-filter="domain" title="Jobs outside your domain are hidden at discovery and never ranked (Settings → Domain filter)">${opts([['matching', `Matching (${j.domain_counts?.matching ?? 0})`], ['not_matching', `Not matching (${j.domain_counts?.not_matching ?? 0})`], ['all', 'Any domain']], f.domain || 'matching')}</select>`)}
         ${field('Description', `<select class="select" id="flt-description" data-filter="description">${opts([['all', 'Any description'], ...(j.description_states || []).map(([k, name, n]) => [k, `${name} (${n})`])], f.description)}</select>`)}`)}
       ${group('Must mention', `<div class="filter-wide">${tagBox('flt', 'keywords', f.keywords || [], 'Python, Lead/Principal… then Enter', 6)}<div class="xs faint mt6">Jobs must mention all of them; use / for either</div></div>`)}
@@ -1189,21 +1188,82 @@ const PF_SORT = {
   approvals: [['default', 'Sort: waiting first'], ['reviewer', 'Sort: reviewer score'], ['fit', 'Sort: best fit'], ['new', 'Sort: newest'], ['company', 'Sort: company']],
 };
 const pfActive = kind => JSON.stringify(S.pf[kind]) !== JSON.stringify(pfDefaults(kind));
+// A score pill (fit or reviewer) for either bound: "min:N" is ≥ N, "max:N" is ≤ N, "custom" opens the range editor.
+// Shared by Discovery, Tailor and Approvals; a value no preset names gets its own option so the pill always shows it.
+const RANGE_FIELDS = { fit: { keys: ['min_fit', 'max_fit'], prefix: 'Fit', any: 'Any fit', min: [50, 70, 80], max: [30, 50, 70] },
+  review: { keys: ['min_review', 'max_review'], prefix: 'Reviewer', any: 'Any reviewer score', min: [50, 65, 75, 85], max: [50, 65] } };
+const rangeLabel = (prefix, lo, hi) => lo && hi ? `${prefix} ${lo}–${hi}` : lo ? `${prefix} ≥ ${lo}` : hi ? `${prefix} ≤ ${hi}` : '';
+function rangePillChoices(field, lo, hi) {
+  const r = RANGE_FIELDS[field];
+  const choices = [['any', r.any], ...r.min.map(n => [`min:${n}`, `${r.prefix} ≥ ${n}`]), ...r.max.map(n => [`max:${n}`, `${r.prefix} ≤ ${n}`])];
+  const pick = lo && hi ? 'range' : lo ? `min:${lo}` : hi ? `max:${hi}` : 'any';
+  if (!choices.some(([v]) => v === pick)) choices.push([pick, rangeLabel(r.prefix, lo, hi)]);
+  return { choices: [...choices, ['custom', 'Custom range…']], pick };
+}
+const rangeTarget = scope => scope === 'discovery' ? S.filters : S.pf[scope];
+function rangePill(scope, field, id) {
+  const [loKey, hiKey] = RANGE_FIELDS[field].keys, f = rangeTarget(scope);
+  const { choices, pick } = rangePillChoices(field, f[loKey], f[hiKey]);
+  const editing = S.rangeEdit?.scope === scope && S.rangeEdit?.field === field;
+  return `<select class="select filter-pill ${f[loKey] || f[hiKey] || editing ? 'on' : ''}" id="${id}" data-range-pill="${scope}:${field}" aria-label="${field === 'fit' ? 'Fit score' : 'Reviewer score'}">${choices.map(([v, t]) => `<option value="${attr(v)}" ${v === pick ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+}
+function setRange(scope, field, lo, hi) {
+  const [loKey, hiKey] = RANGE_FIELDS[field].keys, f = rangeTarget(scope);
+  f[loKey] = lo; f[hiKey] = hi;
+  if (scope === 'discovery') f.page = 1;
+  S.rangeEdit = null; load();
+}
+// The custom range editor under a filter bar's pills: whole scores from 0 to 100, either end optional.
+function rangeEditor(scope) {
+  const edit = S.rangeEdit;
+  if (edit?.scope !== scope) return '';
+  const r = RANGE_FIELDS[edit.field], [loKey, hiKey] = r.keys, f = rangeTarget(scope);
+  const box = (id, label, value) => `<label class="field xs">${label}<input class="input range-input" type="number" inputmode="numeric" min="0" max="100" step="1" id="${id}" value="${value || ''}" placeholder="${label === 'From' ? '0' : '100'}"></label>`;
+  return `<div class="date-panel range-panel" id="range-panel" role="group" aria-label="Custom ${attr(r.prefix.toLowerCase())} range">
+    <div class="xs muted">Custom ${esc(r.prefix === 'Fit' ? 'fit score' : 'reviewer score')} range, 0–100. Leave an end empty for no limit.</div>
+    <div class="row gap10 mt8 range-row">${box('range-lo', 'From', f[loKey])}<span class="range-dash" aria-hidden="true">–</span>${box('range-hi', 'To', f[hiKey])}
+      <span class="grow"></span>${btn('Cancel', 'range-cancel', {}, 'sm ghost')}${btn('Apply', 'range-apply', {}, 'sm primary')}</div>
+    ${S.rangeError ? `<div class="xs mt6" style="color:var(--bad)" role="alert">${esc(S.rangeError)}</div>` : ''}
+  </div>`;
+}
+// Every packet filter that differs from its default, except the status tabs and sort (always on screen).
+function pfActiveChips(kind, facets) {
+  const f = S.pf[kind], out = [], add = (keys, text) => out.push({ keys, text });
+  const name = (list, v) => (list.find(([k]) => String(k) === String(v)) || [v, v])[1];
+  if (f.q) add(['q'], `“${f.q}”`);
+  if (f.min_fit && f.max_fit) add(['min_fit', 'max_fit'], `Fit ${f.min_fit}–${f.max_fit}`);
+  else if (f.min_fit) add(['min_fit'], `Fit ≥ ${f.min_fit}`);
+  else if (f.max_fit) add(['max_fit'], `Fit ≤ ${f.max_fit}`);
+  if (f.min_review || f.max_review) add(['min_review', 'max_review'], rangeLabel('Reviewer', f.min_review, f.max_review));
+  if (f.board && f.board !== 'all') add(['board'], f.board);
+  if (f.location && f.location !== 'all') add(['location'], name(locationOptions(facets.locations || []), f.location));
+  if (f.easy_apply === 'only') add(['easy_apply'], 'Easy Apply only');
+  return out;
+}
 function renderPacketFilters(kind, facets) {
-  const f = S.pf[kind];
+  const f = S.pf[kind], counts = facets.status_counts || {}, chips = pfActiveChips(kind, facets);
   const opts = (list, cur) => list.map(([v, t]) => `<option value="${attr(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(t)}</option>`).join('');
-  const sel = (key, list) => `<select class="select" style="margin:0;width:auto" id="pf-${kind}-${key}" data-pf="${kind}" data-pfkey="${key}">${opts(list, f[key])}</select>`;
-  return `<section class="card flush"><div class="toolbar" style="border-bottom:0">
-    <input class="input grow" style="min-width:180px;margin:0" id="pf-${kind}-q" data-pf="${kind}" data-pfkey="q" value="${attr(f.q)}" placeholder="Search title, company or location…">
-    ${sel('min_fit', [[0, 'Any fit'], [50, 'Fit ≥ 50'], [70, 'Fit ≥ 70'], [80, 'Fit ≥ 80']])}
-    ${sel('min_review', [[0, 'Any reviewer score'], [50, 'Reviewer ≥ 50'], [65, 'Reviewer ≥ 65'], [75, 'Reviewer ≥ 75'], [85, 'Reviewer ≥ 85']])}
-    ${sel('board', [['all', 'All boards'], ...facets.boards.map(b => [b, b])])}
-    ${sel('location', locationOptions(facets.locations))}
-    ${'easy_apply' in f ? sel('easy_apply', [['all', 'Any apply method'], ['only', `Easy Apply only (${facets.easy_apply || 0})`]]) : ''}
-    ${sel('status', PF_STATUS[kind])}${sel('sort', PF_SORT[kind])}
-    <span class="small muted none">${facets.total === facets.total_all ? `${facets.total_all} job${facets.total_all === 1 ? '' : 's'}` : `${facets.total} of ${facets.total_all}`}</span>
-    ${btn('Reset', 'pf-reset', { kind }, 'sm', !pfActive(kind))}
-  </div></section>`;
+  const pillSel = (key, list, label, on) => `<select class="select filter-pill ${on ? 'on' : ''}" id="pf-${kind}-${key}" data-pf="${kind}" data-pfkey="${key}" aria-label="${attr(label)}">${opts(list, f[key])}</select>`;
+  const status = f.status || 'all';
+  const shown = facets.total === facets.total_all ? `${facets.total_all} job${facets.total_all === 1 ? '' : 's'}` : `${facets.total} of ${facets.total_all} jobs`;
+  return `<section class="card flush filterbar packet-filters">
+    <div class="toolbar filter-find">
+      <input class="input grow filter-search" id="pf-${kind}-q" data-pf="${kind}" data-pfkey="q" value="${attr(f.q)}" placeholder="Search title, company or location…" aria-label="Search jobs">
+      <select class="select" id="pf-${kind}-sort" data-pf="${kind}" data-pfkey="sort" aria-label="Sort">${opts(PF_SORT[kind], f.sort)}</select>
+    </div>
+    <div class="pf-status" role="tablist" aria-label="Status">${PF_STATUS[kind].map(([k, t]) => `<button type="button" role="tab" class="pf-tab ${status === k ? 'on' : ''}" aria-selected="${status === k}" data-act="pf-status" data-kind="${kind}" data-status="${k}">${esc(k === 'all' ? 'All' : t)}${counts[k] === undefined ? '' : `<span class="pf-tab-count">${counts[k]}</span>`}</button>`).join('')}</div>
+    <div class="filter-pills">
+      ${rangePill(kind, 'fit', `pf-${kind}-fit`)}
+      ${rangePill(kind, 'review', `pf-${kind}-review`)}
+      ${facets.boards?.length > 1 || f.board !== 'all' ? pillSel('board', [['all', 'All boards'], ...facets.boards.map(b => [b, b])], 'Board', f.board !== 'all') : ''}
+      ${pillSel('location', locationOptions(facets.locations || []), 'Location', f.location !== 'all')}
+      ${'easy_apply' in f ? `<label class="filter-toggle ${f.easy_apply === 'only' ? 'on' : ''}" title="Only jobs you can apply to with Easy Apply"><input type="checkbox" id="pf-${kind}-easy-apply" data-pf="${kind}" data-pfkey="easy_apply" ${f.easy_apply === 'only' ? 'checked' : ''}><span class="filter-toggle-mark" aria-hidden="true">✓</span>Easy Apply only <span class="pf-tab-count">${facets.easy_apply || 0}</span></label>` : ''}
+      <span class="grow"></span>
+      <span class="xs muted">${shown}</span>
+    </div>
+    ${rangeEditor(kind)}
+    ${chips.length || status !== 'all' ? `<div class="filter-chips" aria-label="Active filters">${chips.map(a => `<span class="chip">${esc(a.text)}<button type="button" aria-label="Remove filter ${attr(a.text)}" data-act="pf-clear" data-kind="${kind}" data-keys="${a.keys.join(',')}">×</button></span>`).join('')}<a href="#" class="xs" data-act="pf-reset" data-kind="${kind}">Clear all</a></div>` : ''}
+  </section>`;
 }
 const pfNoMatch = kind => `<section class="card">${empty('No jobs match these filters', `${S.pf[kind].q ? `Nothing matches “${esc(S.pf[kind].q)}” with the current filters. ` : ''}Loosen or reset the filters to see all ${(kind === 'tailor' ? D.tailorFacets : D.approvalFacets).total_all}.`, btn('Reset filters', 'pf-reset', { kind }, 'primary'))}</section>`;
 
@@ -2804,7 +2864,22 @@ const A = {
       return out;
     }, out => `Deleted ${out.deleted} job${out.deleted === 1 ? '' : 's'}${out.protected.length ? ` · kept ${out.protected.length} approved or applied` : ''}`);
   },
-  'pf-reset': el => { S.pf[el.dataset.kind] = pfDefaults(el.dataset.kind); load(); },
+  'pf-reset': (el, e) => { e?.preventDefault(); S.pf[el.dataset.kind] = pfDefaults(el.dataset.kind); load(); },
+  'range-cancel': () => { S.rangeEdit = null; S.rangeError = ''; render(); },
+  'range-apply': () => {
+    // 0 means "no limit" throughout the filters, so an entered "To" of 0 is refused rather than read as no limit.
+    const raw = id => (document.getElementById(id)?.value ?? '').trim();
+    const read = id => raw(id) === '' ? 0 : Number(raw(id));
+    const lo = read('range-lo'), hi = read('range-hi');
+    const bad = [lo, hi].some(v => !Number.isInteger(v) || v < 0 || v > 100);
+    S.rangeError = bad ? 'Use whole numbers from 0 to 100.'
+      : raw('range-hi') !== '' && hi === 0 ? 'Leave “To” empty for no upper limit, or use 1–100.'
+        : lo && hi && lo > hi ? '“From” must not be above “To”.' : '';
+    if (S.rangeError) { render(); return; }
+    const { scope, field } = S.rangeEdit; S.rangeError = ''; setRange(scope, field, lo, hi);
+  },
+  'pf-status': el => { S.pf[el.dataset.kind].status = el.dataset.status; load(); },
+  'pf-clear': el => { const d = pfDefaults(el.dataset.kind); el.dataset.keys.split(',').forEach(k => { S.pf[el.dataset.kind][k] = d[k]; }); load(); },
   'reset-filters': (el, e) => { e.preventDefault(); S.filters = freshFilters({ per_page: S.filters.per_page }); S.dateMode = null; load(); },
   'clear-filter': el => {
     el.dataset.keys.split(',').forEach(k => { S.filters[k] = Array.isArray(DEFAULT_FILTERS[k]) ? [] : DEFAULT_FILTERS[k]; });
@@ -3472,9 +3547,14 @@ document.addEventListener('change', e => {
     if (el.type === 'radio' || 'rerender' in el.dataset) render();
   }
   if (el.dataset.iv && S.ivDraft) S.ivDraft[el.dataset.iv] = el.value;
-  if (el.dataset.pf && el.dataset.pfkey !== 'q') { const k = el.dataset.pfkey; S.pf[el.dataset.pf][k] = k.startsWith('min_') ? Number(el.value) : el.value; load(); }
+  if (el.dataset.pf && el.dataset.pfkey !== 'q') { const k = el.dataset.pfkey; S.pf[el.dataset.pf][k] = el.type === 'checkbox' ? (el.checked ? 'only' : 'all') : k.startsWith('min_') ? Number(el.value) : el.value; load(); }
   if (el.dataset.rf && el.dataset.rf !== 'q') { S.rf[el.dataset.rf] = el.value; loadRanking().then(render); }
   if (el.dataset.tf && el.dataset.tf !== 'q') { S.tf[el.dataset.tf] = el.dataset.tf === 'min_fit' ? Number(el.value) : el.value; render(); }
+  if (el.dataset.rangePill) {
+    const [scope, field] = el.dataset.rangePill.split(':'), [kind, n] = el.value.split(':');
+    if (kind === 'custom') { S.rangeEdit = { scope, field }; S.rangeError = ''; S.datePop = false; render(); document.getElementById('range-lo')?.focus(); }
+    else if (kind !== 'range') setRange(scope, field, kind === 'min' ? Number(n) : 0, kind === 'max' ? Number(n) : 0);
+  }
   if (el.dataset.filter && el.dataset.filter !== 'q') { S.filters[el.dataset.filter] = el.type === 'checkbox' ? el.checked : ['per_page', 'min_fit', 'max_fit'].includes(el.dataset.filter) ? Number(el.value) : el.value; S.filters.page = 1; load(); }
   if (el.dataset.triage && el.dataset.triage !== 'min_fit') { S.triage[el.dataset.triage] = el.type === 'checkbox' ? el.checked : el.value; load(); }
   if (el.dataset.actChange) A[el.dataset.actChange](el, e);
@@ -3508,6 +3588,8 @@ document.addEventListener('keydown', e => {
   // In the job title box, Enter saves and Escape leaves the edit, not the whole modal.
   if (el.dataset?.form === 'jobtitle' && e.key === 'Enter') { e.preventDefault(); A['save-job-title']({ dataset: { id: el.dataset.field } }); return; }
   if (el.dataset?.form === 'jobtitle' && e.key === 'Escape') { A['cancel-job-title']({ dataset: { id: el.dataset.field } }); return; }
+  if (S.rangeEdit && el.classList?.contains('range-input') && e.key === 'Enter') { e.preventDefault(); A['range-apply'](); return; }
+  if (e.key === 'Escape' && S.rangeEdit) { const { scope, field } = S.rangeEdit; S.rangeEdit = null; S.rangeError = ''; render(); document.querySelector(`[data-range-pill="${scope}:${field}"]`)?.focus(); return; }
   if (e.key === 'Escape' && S.datePop) { S.datePop = false; render(); document.getElementById('flt-date')?.focus(); return; }
   if (e.key === 'Escape' && S.moreFilters && document.getElementById('flt-more') && !S.paletteOpen && !S.jobOpen && !S.kitJob && !S.boardReview) { S.moreFilters = false; render(); document.querySelector('[data-act="toggle-more-filters"]')?.focus(); return; }
   if (e.key === 'Escape') { if (S.boardReview && !S.paletteOpen && !S.jobOpen && !S.kitJob) { S.boardReview = null; render(); return; } if (S.paletteOpen || S.jobOpen || S.kitJob) { S.paletteOpen = false; S.jobOpen = null; S.kitJob = null; render(); } return; }
