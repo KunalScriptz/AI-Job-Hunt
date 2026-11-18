@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.models import AIModel
 from app.prompts import build_model_health_prompt, build_worker_test_prompt
 from app.services import ai_model_config as config
-from app.services import model_resolution
+from app.services import model_market, model_resolution
 from app.services.ai_workers import WORKERS
 from app.services.litellm_client import LiteLLMError, ollama_tags
 from app.services.litellm_config_manager import classify_live, owner_tag
@@ -199,6 +199,107 @@ def discover(db: Session, user_id: int) -> dict[str, Any]:
     return {"models": len(names), "added": added, "missing": missing, "facts_changed": changed,
             "litellm_version": conn.litellm_version, "draft_revision": conn.draft_revision,
             "ollama_enriched": sorted(base for base, tags in ollama.items() if tags)}
+
+
+# ───────────── OpenRouter: choose the top models, then add them to the catalog ─────────────
+
+OPENROUTER_PREFIX = model_resolution.OPENROUTER_PREFIX
+OPENROUTER_SOURCE = "OPENROUTER"
+OPENROUTER_RANKS = ("cheapest", "context", "newest", "quality")
+OPENROUTER_MAX_PICK = 50
+
+
+def _openrouter_rows(user_id: int, *, refresh: bool = False) -> list[model_market.MarketModel]:
+    """OpenRouter's public model list (cached for MODEL_MARKET_CACHE_HOURS); raises when there is none to offer."""
+    if not get_settings().model_market_enabled:
+        raise config.AIConfigError("Reading public model catalogs is switched off on this server (MODEL_MARKET_ENABLED)")
+    state = model_market.load(user_id, ["openrouter"], refresh=refresh)["openrouter"]
+    rows = model_market.parse_openrouter(state.data) if state.data is not None else []
+    if not rows:
+        raise config.AIConfigError(f"Could not read OpenRouter's model list: {state.error or 'it listed no models'}",
+                                   status="UNAVAILABLE")
+    return rows
+
+
+def _quality_available() -> bool:
+    return bool(get_settings().artificial_analysis_api_key)
+
+
+def openrouter_candidates(db: Session, user_id: int, criteria: model_market.PickCriteria, *,
+                          refresh: bool = False) -> dict[str, Any]:
+    """The top `limit` OpenRouter models for the criteria, for the person to choose from. Adds nothing."""
+    if criteria.rank not in OPENROUTER_RANKS:
+        raise config.AIConfigError(f"Rank by one of: {', '.join(OPENROUTER_RANKS)}")
+    if criteria.rank == "quality" and not _quality_available():
+        raise config.AIConfigError("Ranking by quality needs ARTIFICIAL_ANALYSIS_API_KEY on the server")
+    rows = _openrouter_rows(user_id, refresh=refresh)
+    if criteria.rank == "quality":
+        state = model_market.load(user_id, ["artificial_analysis"])["artificial_analysis"]
+        model_market.attach_benchmarks(rows, model_market.parse_artificial_analysis(state.data)
+                                       if state.data is not None else {})
+    in_catalog = set(db.scalars(select(AIModel.litellm_model_name).where(
+        AIModel.user_id == user_id, AIModel.removed_at.is_(None),
+        AIModel.litellm_model_name.startswith(OPENROUTER_PREFIX))).all())
+    have = {name[len(OPENROUTER_PREFIX):] for name in in_catalog}
+    picked, matching = model_market.pick_top(rows, criteria, have, max_pick=OPENROUTER_MAX_PICK)
+    return {"models": picked, "matching": matching, "listed": len(rows),
+            "ranks": [r for r in OPENROUTER_RANKS if r != "quality" or _quality_available()]}
+
+
+def _openrouter_facts(row: model_market.MarketModel) -> dict[str, Any]:
+    return {"provider": "openrouter", "underlying_model": row.model_id, "context_window": row.context_window,
+            "max_output_tokens": row.max_output_tokens, "supports_structured_output": row.structured_output,
+            "supports_tools": row.tools, "supports_reasoning": row.reasoning, "supports_vision": row.vision}
+
+
+def discover_openrouter(db: Session, user_id: int, ids: list[str]) -> dict[str, Any]:
+    """Add the chosen OpenRouter models to the catalog, and refresh what OpenRouter states about the ones already in
+    it. Never adds a model nobody chose, and never deletes one OpenRouter stopped listing (an assignment may use it)."""
+    config.ensure_seeded(db, user_id)
+    chosen = list(dict.fromkeys(str(i).strip() for i in ids or [] if str(i).strip()))
+    if len(chosen) > OPENROUTER_MAX_PICK:
+        raise config.AIConfigError(f"Add at most {OPENROUTER_MAX_PICK} OpenRouter models at a time")
+    started = config.utcnow()
+    listed = {row.model_id: row for row in _openrouter_rows(user_id, refresh=True)}
+    unknown = [i for i in chosen if i not in listed]
+    if unknown:
+        raise config.AIConfigError(f"OpenRouter does not list {', '.join(unknown[:5])}", unknown=unknown)
+    rows = {m.litellm_model_name: m for m in db.scalars(select(AIModel).where(AIModel.user_id == user_id)).all()}
+    before = {name: config.model_snapshot(row) for name, row in rows.items()}
+    known = [row.underlying_model for name, row in rows.items()
+             if row.source == OPENROUTER_SOURCE and row.removed_at is None and row.underlying_model]
+    added, missing = [], []
+    for model_id in dict.fromkeys([*chosen, *known]):
+        name = OPENROUTER_PREFIX + model_id
+        row = rows.get(name)
+        if model_id not in listed:
+            if row is not None:
+                missing.append(name)
+            continue
+        if row is not None and row.removed_at is not None:
+            if model_id not in chosen:
+                continue  # a person removed it: a refresh leaves it removed
+            row.removed_at = None  # choosing it again brings it back, as adding a removed model does
+        market = listed[model_id]
+        if row is None:
+            row = AIModel(user_id=user_id, litellm_model_name=name, display_name=market.name or model_id,
+                          source=OPENROUTER_SOURCE, model_type="CUSTOM", created_at=started)
+            db.add(row)
+            rows[name] = row
+            added.append(name)
+        for key, value in _openrouter_facts(market).items():
+            setattr(row, key, value)
+        row.last_synced_at = row.updated_at = started
+    db.flush()
+    changed = any(config.model_snapshot(row) != before.get(name) for name, row in rows.items() if name in before)
+    conn = config._locked_connection(db, user_id)
+    if changed or added:
+        conn.draft_revision += 1
+    config.audit(db, user_id, "DISCOVER", actor=config._actor(db, user_id),
+                 changes=[{"source": "openrouter", "added": added, "missing": missing, "models": len(chosen)}])
+    db.commit()
+    return {"models": len(chosen), "added": added, "missing": missing, "facts_changed": changed,
+            "draft_revision": conn.draft_revision}
 
 
 TEST_MAX_TOKENS = 512

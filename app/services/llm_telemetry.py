@@ -224,6 +224,8 @@ class Attempt:
     queue_wait_ms: int | None = None
     gateway_overhead_ms: int | None = None
     service_tier: str | None = None
+    # Direct OpenRouter route: the worker's backups as OpenRouter ids, sent as OpenRouter's own fallbacks. Not stored.
+    backup_models: tuple[str, ...] = ()
 
 
 _sessions: Callable[[], Session] | None = None
