@@ -92,15 +92,18 @@ def rows(**params):
 
 
 def test_each_status_is_labelled_for_what_it_is(owner):
-    new, back, gone = make_job(owner), make_job(owner, status="pending_approval"), make_job(owner, status="rejected")
-    listed = {r["id"]: r for r in rows()}
+    co = "Statuslabel Co"  # a company no other test uses, so counts are this test's alone
+    new, back, gone = (make_job(owner, company=co), make_job(owner, status="pending_approval", company=co),
+                       make_job(owner, status="rejected", company=co))
+    listed = {r["id"]: r for r in rows(q=co)}
     assert listed[new]["age"].startswith("tailored") and listed[new]["to_decide"]
     assert listed[back]["age"] == "sent back" and listed[back]["to_decide"] and not listed[back]["waiting"]
     assert gone not in listed, "a rejected job is out of the default view"
-    assert [r["id"] for r in rows(status="sent_back")] == [back]
-    rejected = rows(status="rejected")
+    assert [r["id"] for r in rows(q=co, status="sent_back")] == [back]
+    rejected = rows(q=co, status="rejected")
     assert [r["id"] for r in rejected] == [gone] and rejected[0]["age"] == "rejected"
-    facets = rows(with_facets=True)
+    facets = rows(q=co, with_facets=True)
+    assert facets["status_counts"]["rejected"] == 1 and facets["status_counts"]["all"] == 2
     assert facets["min_review_score"] == client.get(f"/api/approvals/{new}").json()["min_review_score"]
 
 

@@ -322,6 +322,19 @@ def reparse(resume_id: int, payload: ReparseIn, db: Session = Depends(get_user_d
     return _commit(db, resume)
 
 
+@router.post("/api/resumes/{resume_id}/reread")
+def reread(resume_id: int, db: Session = Depends(get_user_db)):
+    """Read a version's own file again with the new reader (resume extraction V2): a new version, not active by
+    itself; the version read before stays as it is."""
+    resume = _resume(db, resume_id)
+    try:
+        created = rv.reread_file(db, profile_for(db), resume, user_id=require_user_id(db))
+    except rv.RereadUnavailable as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from exc
+    return {**_commit(db, created), "reread_from": resume.id}
+
+
 @router.post("/api/resumes/{resume_id}/reparse/resolve")
 def reparse_resolve(resume_id: int, payload: ResolveIn, db: Session = Depends(get_user_db)):
     resume = _resume(db, resume_id)
