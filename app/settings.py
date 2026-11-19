@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Any
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,6 +24,13 @@ class Settings(BaseSettings):
     session_days: int = 30
     # Secure cookie flag. Unset = on when the request arrives over HTTPS.
     session_cookie_secure: bool | None = None
+
+    @field_validator("session_cookie_secure", mode="before")
+    @classmethod
+    def _blank_session_cookie_secure_is_unset(cls, value: Any) -> Any:
+        """SESSION_COOKIE_SECURE="" ("leave blank to auto-detect", per .env.example) must mean unset, not an
+        invalid boolean — pydantic otherwise rejects the empty string before this field's own default applies."""
+        return None if value == "" else value
 
     # LLM provider: litellm | openai | anthropic | openrouter | gemini | mock. `litellm` is gateway mode: every
     # worker's model comes from AI Orchestration → Models and every request goes through the LiteLLM proxy.
