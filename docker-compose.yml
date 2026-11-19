@@ -16,7 +16,11 @@ services:
     # fresh install, create it once: `docker compose exec db psql -U jobhunt -d jobhunt -c "CREATE DATABASE litellm OWNER jobhunt;"`
     # (needed again after `docker compose down -v`, since that drops the Postgres volume).
     image: ghcr.io/berriai/litellm:main-stable
-    ports: ["4000:4000"]
+    # Bound to localhost only: `web` reaches this over the compose network (http://litellm:4000) regardless of
+    # host port publishing, so this mapping exists only for local debugging (curl from the host) — never expose
+    # it on a public interface, it fronts your DeepSeek key with no public-facing auth of its own beyond the
+    # LiteLLM master key.
+    ports: ["127.0.0.1:4000:4000"]
     volumes:
       - ./integrations/litellm/config.deepseek.yaml:/app/config.yaml:ro
     environment:
@@ -30,7 +34,10 @@ services:
     build: .
     # Headless Chromium (job-description recovery) uses shared memory; the app also passes --disable-dev-shm-usage.
     shm_size: "512m"
-    ports: ["8000:8000"]
+    # Bound to localhost only: on a shared server, put a reverse proxy (nginx etc.) in front for TLS/domain
+    # routing — a 0.0.0.0 binding here would make the app directly internet-reachable over plain HTTP on this
+    # port, bypassing the proxy and risking a collision with another app already using it.
+    ports: ["127.0.0.1:8000:8000"]
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://jobhunt:jobhunt@db:5432/jobhunt
