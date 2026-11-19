@@ -36,8 +36,11 @@ services:
     shm_size: "512m"
     # Bound to localhost only: on a shared server, put a reverse proxy (nginx etc.) in front for TLS/domain
     # routing — a 0.0.0.0 binding here would make the app directly internet-reachable over plain HTTP on this
-    # port, bypassing the proxy and risking a collision with another app already using it.
-    ports: ["127.0.0.1:8000:8000"]
+    # port, bypassing the proxy and risking a collision with another app already using it. Host-side port 8420
+    # (container-side stays 8000, the app's own default) to avoid colliding with 8000/8080/3000/5000, commonly
+    # already taken on a box running several other apps — change the left side of this mapping if 8420 clashes
+    # with something else on your server, nothing else needs to change to match.
+    ports: ["127.0.0.1:8420:8000"]
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://jobhunt:jobhunt@db:5432/jobhunt

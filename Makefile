@@ -28,7 +28,7 @@ up: env
 	@$(MAKE) --no-print-directory wait-db
 	@$(MAKE) --no-print-directory litellm-db
 	@echo ""
-	@echo "Job Hunt OS is running: http://localhost:8000"
+	@echo "Job Hunt OS is running: http://localhost:8420"
 	@echo "LiteLLM proxy (if configured):  http://localhost:4000"
 	@echo "'make logs' to watch it, 'make down' to stop."
 
