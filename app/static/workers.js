@@ -605,7 +605,8 @@ async function wkSaveExtra(changes) {
   if (Object.keys(server).length) D.wkSettings.server = (await api('/api/workers/server-settings', { method: 'PUT', body: { values: server } })).server;
 }
 const wkSecs = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 6) / 10}m`.replace('.0m', 'm') : `${Math.round(s / 360) / 10}h`.replace('.0h', 'h');
-const WK_SET_ICONS = { parsing: '▤', recovery: '⟲', ranking: '★', qualification: '⇶', insights: '◈', tailoring: '✎', application: '⌨', indexing: '⌕', approvals: '✓', backoff: '⏱' };
+const WK_SET_ICONS = { classification: '⛉', parsing: '▤', recovery: '⟲', ranking: '★', qualification: '⇶', insights: '◈', tailoring: '✎', application: '⌨', indexing: '⌕', resume_parsing: '▥', approvals: '✓', backoff: '⏱' };
+const wkSetIcon = kind => WK_SET_ICONS[kind] || '•';
 // The unit beside a number, and how its default reads, from the setting's name.
 function wkUnit(name) {
   if (/seconds/.test(name)) return ['sec', v => wkSecs(Number(v))];
@@ -652,7 +653,7 @@ function wkSettingsCard(kind, title, extra = '') {
   const facts = wkScheduleFacts(spec.scheduler, kind).map(f => `<span>${esc(f)}</span>`).join('') + (active ? `<span>● ${active} active</span>` : '');
   const server = wkServerRows(kind);
   return `<section class="card flush wk-set-card ${on ? '' : 'paused'}" id="wk-set-${kind}">
-    <header class="wk-set-head"><span class="wk-set-icon" aria-hidden="true">${WK_SET_ICONS[kind]}</span>
+    <header class="wk-set-head"><span class="wk-set-icon" aria-hidden="true">${wkSetIcon(kind)}</span>
       <div class="grow" style="min-width:0"><div class="row gap8 wrap" style="align-items:center"><h3>${esc(title)}</h3>${on ? '<span class="orch-chip good">✓ Runs automatically</span>' : '<span class="orch-chip warn">⏸ Paused</span>'}</div><div class="wk-meta mt6">${facts}</div></div>
       <label class="wk-switch" title="Run ${attr(title)} automatically"><input type="checkbox" id="workers-${key}" data-form="workers" data-field="${key}" data-rerender ${on ? 'checked' : ''}><span aria-hidden="true"></span><b>${on ? 'Automatic' : 'Paused'}</b></label></header>
     ${on ? '' : `<div class="wk-paused-note">Queued ${esc(title)} tasks wait for your account until you turn this back on. Run now still starts one.</div>`}
@@ -693,7 +694,7 @@ function wkSettings() {
   const auto = id => !!fv('workers', wkAKey(id, 'auto'), D.wkSettings.account[id].values.auto);
   const nav = [['classification', 'Domain check'], ['parsing', 'JD parsing'], ['recovery', 'JD recovery'], ['ranking', 'Ranking'], ['qualification', 'Qualification'], ['insights', 'Job insights'], ['tailoring', 'Tailoring'], ['application', 'Application'], ['indexing', 'Indexing'], ['resume_parsing', 'Resume parsing'], ['approvals', 'Approvals'], ['backoff', 'Rate limits']]
     .filter(([id]) => id === 'backoff' || id === 'approvals' || D.wkSettings.account[id])
-    .map(([id, t]) => `<a href="#wk-set-${id}" data-act="wk-set-jump" data-id="${id}"><span class="wk-set-icon sm" aria-hidden="true">${WK_SET_ICONS[id]}</span><span class="grow">${t}</span>${id === 'backoff' ? (backoffOn ? '<i class="wk-state on">On</i>' : '<i class="wk-state">Off</i>') : id === 'approvals' ? (fv(form, 'application_mode', b.application_mode) === 'automatic' ? '<i class="wk-state on">Auto</i>' : '<i class="wk-state">Manual</i>') : auto(id) ? '<i class="wk-state on">Auto</i>' : '<i class="wk-state paused">Paused</i>'}</a>`).join('');
+    .map(([id, t]) => `<a href="#wk-set-${id}" data-act="wk-set-jump" data-id="${id}"><span class="wk-set-icon sm" aria-hidden="true">${wkSetIcon(id)}</span><span class="grow">${t}</span>${id === 'backoff' ? (backoffOn ? '<i class="wk-state on">On</i>' : '<i class="wk-state">Off</i>') : id === 'approvals' ? (fv(form, 'application_mode', b.application_mode) === 'automatic' ? '<i class="wk-state on">Auto</i>' : '<i class="wk-state">Manual</i>') : auto(id) ? '<i class="wk-state on">Auto</i>' : '<i class="wk-state paused">Paused</i>'}</a>`).join('');
   return `<form id="settings-editor" class="wk-settings" data-form="workers" novalidate><fieldset ${isBusy('settings-workers') ? 'disabled' : ''}>
     <div class="wk-set-layout"><nav class="wk-set-nav card" aria-label="Worker settings"><div class="caps-sm mb8">WORKER SETTINGS</div>${nav}
         <div class="wk-legend-box mt12"><div><span aria-hidden="true">👤</span> <b>Your account</b> only your tasks</div><div><span aria-hidden="true">${D.wkSettings.server_editable ? '⚙' : '🔒'}</span> <b>Server</b> ${D.wkSettings.server_editable ? 'every account (admin)' : 'set by your admin'}</div><div><span class="wk-dot" aria-hidden="true"></span> <b>Custom</b> differs from the default</div></div>
