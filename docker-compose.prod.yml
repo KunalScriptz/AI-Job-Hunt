@@ -1,0 +1,22 @@
+# Production-only override: attaches `web` to the `shared` Docker network your reverse proxy (Nginx Proxy
+# Manager) and other apps already use, so it's reached by container name/network alias — no host port needed
+# for that at all. Never auto-applied: only used explicitly via `make up-prod` / `docker compose -f
+# docker-compose.yml -f docker-compose.prod.yml ...`, so plain `docker compose up` / `make up` on a machine
+# without a `shared` network (e.g. local Windows dev) is completely unaffected.
+#
+# In your reverse proxy's UI, point the proxy host at:
+#   Forward Hostname / IP: jobhunt-web
+#   Forward Port:          8000
+#   Scheme:                http
+
+networks:
+  shared:
+    external: true
+
+services:
+  web:
+    networks:
+      default: {}
+      shared:
+        aliases:
+          - jobhunt-web

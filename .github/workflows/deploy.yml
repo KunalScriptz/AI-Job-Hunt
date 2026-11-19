@@ -84,7 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$DEPLOY_DIR"
-          make up
+          make up-prod
 
       - name: Wait for the app, then show status and recent logs
         run: |

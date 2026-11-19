@@ -4,12 +4,14 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down restart logs ps env wait-db litellm-db backup db-shell shell clean
+.PHONY: help up up-prod down restart logs ps env wait-db litellm-db backup db-shell shell clean
 
 help:
 	@echo "Job Hunt OS — docker compose shortcuts"
 	@echo ""
 	@echo "  make up          Build and start everything (first run also creates .env + litellm DB)"
+	@echo "  make up-prod     Same as up, plus attaches web to the shared reverse-proxy network"
+	@echo "                   (docker-compose.prod.yml) — only for a server with that network, not local dev"
 	@echo "  make down        Stop all containers"
 	@echo "  make restart     Rebuild and restart just the web app (after a code change)"
 	@echo "  make logs        Tail logs from all containers"
@@ -30,6 +32,14 @@ up: env
 	@echo ""
 	@echo "Job Hunt OS is running: http://localhost:8420"
 	@echo "LiteLLM proxy (if configured):  http://localhost:4000"
+	@echo "'make logs' to watch it, 'make down' to stop."
+
+up-prod: env
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+	@$(MAKE) --no-print-directory wait-db
+	@$(MAKE) --no-print-directory litellm-db
+	@echo ""
+	@echo "Job Hunt OS is running: http://localhost:8420 and on the 'shared' network as jobhunt-web:8000"
 	@echo "'make logs' to watch it, 'make down' to stop."
 
 down:
