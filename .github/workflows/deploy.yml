@@ -86,14 +86,27 @@ jobs:
           cd "$DEPLOY_DIR"
           make up
 
-      - name: Status and recent logs
+      - name: Wait for the app, then show status and recent logs
         run: |
           cd "$DEPLOY_DIR"
+          # make up only waits for Postgres, not for uvicorn itself to finish booting (imports, migrations) —
+          # give it up to a minute before checking logs, so a merely-still-starting app isn't reported as failed.
+          healthy=false
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8420/health >/dev/null 2>&1 && healthy=true && break
+            sleep 2
+          done
+
           echo "--- containers ---"
           docker compose ps
           echo "--- web (last 50 lines) ---"
           docker compose logs --tail=50 web
           echo "--- litellm (last 20 lines) ---"
           docker compose logs --tail=20 litellm
-          echo "--- health check ---"
-          curl -sf http://localhost:8420/health && echo " OK" || (echo " HEALTH CHECK FAILED" && exit 1)
+
+          if [ "$healthy" = true ]; then
+            echo "--- health check: OK ---"
+          else
+            echo "--- health check: still failing after 60s ---"
+            exit 1
+          fi
