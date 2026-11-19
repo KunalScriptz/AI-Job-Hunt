@@ -18,7 +18,10 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, jobhunt]
+    # The runner's display name is "jobhunt" but its actual labels are self-hosted/Linux/ARM64 — "jobhunt" is
+    # not itself a label, so runs-on must match on the real labels (fine as long as this is the only
+    # self-hosted runner on the repo; add a custom --labels jobhunt at registration if you ever add a second).
+    runs-on: [self-hosted, Linux, ARM64]
     env:
       DEPLOY_DIR: /home/ubuntu/all_bots/jobhuntos_repo
       REPO_URL: https://github.com/${{ github.repository }}.git
