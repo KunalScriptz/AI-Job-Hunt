@@ -106,7 +106,7 @@ from app.services.ai_config import resolve as resolve_ai_config
 from app.services.ai_model_config import gateway_settings
 from app.services.approval import ApprovalRefused
 from app.services.contacts import recruiters_of, set_primary_recruiter
-from app.services.exports import markdown_to_simple_pdf
+from app.services.exports import render_resume_pdf
 from app.services.knowledge import question_key
 from app.services.sources import (
     board_teams,
@@ -773,7 +773,7 @@ def resume_pdf(job_id: int, db: Session = Depends(get_user_db)):
     if not resume:
         raise HTTPException(404, "No tailored resume for this job")
     _check_export(db, job_id)
-    data = markdown_to_simple_pdf(resume.markdown)
+    data = render_resume_pdf(resume.markdown)
     return Response(data, media_type="application/pdf",
                     headers=download_headers(packet_download_name(db, job_id, "pdf")))
 

@@ -156,6 +156,39 @@ def test_a_bullet_split_by_pdf_extraction_still_grounds():
     assert not rp.Source(text).has_passage("Reduced costs by 45% across every team")
 
 
+PROJECT_RESUME = """# Jane Doe
+
+## Projects
+MockMind: Voice-Agentic AI Mock Interviewer | LiveKit, WebRTC, Deepgram
+- Self-directed voice AI agent for mock interviews.
+"""
+
+
+def test_a_project_whose_name_matches_the_text_survives_grounding():
+    """The prompt now tells the model name is the short title before the first colon/dash/pipe — this is the
+    shape that instruction produces, and it must ground, achievements included (regression for the bug where an
+    AI re-parse silently dropped every project because its name didn't appear verbatim in the resume text)."""
+    answer = sr.from_parser_output({"projects": [
+        {"name": "MockMind", "description": "Voice-Agentic AI Mock Interviewer",
+         "achievements": ["Self-directed voice AI agent for mock interviews."]}]})
+    data, dropped = rp.ground(answer, PROJECT_RESUME)
+    assert [p["name"] for p in data["projects"]] == ["MockMind"]
+    assert [b if isinstance(b, str) else b["text"] for b in data["projects"][0]["achievements"]] == [
+        "Self-directed voice AI agent for mock interviews."]
+    assert "projects" not in dropped
+
+
+def test_a_project_name_the_text_does_not_contain_is_still_dropped():
+    """The strictness itself is unchanged: a name that is not in the resume text drops the whole project, exactly
+    as before the prompt fix -- only the prompt's instruction changed, not ground()'s own rule."""
+    answer = sr.from_parser_output({"projects": [
+        {"name": "Voice-Agentic AI Mock Interviewer for candidates", "description": "",
+         "achievements": ["Self-directed voice AI agent for mock interviews."]}]})
+    data, dropped = rp.ground(answer, PROJECT_RESUME)
+    assert data["projects"] == []
+    assert dropped.get("projects") == 1
+
+
 # ───────────── the queue and the steps ─────────────
 
 def test_an_upload_queues_the_ai_parse_and_an_untouched_resume_is_filled(user):

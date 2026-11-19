@@ -272,6 +272,11 @@ class Settings(BaseSettings):
     resume_ocr_backend: str = "tesseract"
     resume_ocr_max_pages: int = 4
     resume_ocr_timeout_seconds: int = 20
+    # Optional: render tailored resume PDFs via a self-hosted LaTeX compile service (app.services.exports) instead
+    # of the built-in reportlab renderer. POST {"source": "<tex>"} to this URL; a non-200 response, a timeout or
+    # any other failure falls back to the built-in renderer, so a resume download never hard-fails on it. Unset
+    # (the default for anyone cloning this repo) always uses the built-in renderer.
+    latex_render_url: str | None = None
     # Re-rank qualified jobs once their description has been parsed. Off by default: parsing a backlog would
     # otherwise start a round of ranking calls.
     jd_rerank_after_parse: bool = False

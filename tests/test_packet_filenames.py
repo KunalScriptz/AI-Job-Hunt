@@ -1,7 +1,7 @@
 """A downloaded packet file is called what the apply kit said it would be called.
 
 The kit and the three download endpoints used to build their own names, so the screen promised
-`rohan-roy-straive-v1.pdf` and the browser saved `job-282-resume.pdf`. One definition now serves both.
+`Rohan_Roy_Straive_v1.pdf` and the browser saved `job-282-resume.pdf`. One definition now serves both.
 """
 import uuid
 
@@ -86,8 +86,8 @@ def downloaded_name(job_id, path):
 def test_what_the_kit_shows_is_what_the_browser_saves(owner):
     job_id = make_packet(owner)
     shown = kit_names(job_id)
-    assert shown == {"PDF": "rohan-roy-straive-v1.pdf", "DOCX": "rohan-roy-straive-v1.docx",
-                     "TXT": "cover-letter-rohan-roy-straive.txt"}
+    assert shown == {"PDF": "Rohan_Roy_Straive_v1.pdf", "DOCX": "Rohan_Roy_Straive_v1.docx",
+                     "TXT": "Cover_Letter_Rohan_Roy_Straive.txt"}
     assert downloaded_name(job_id, "resume.pdf") == shown["PDF"]
     assert downloaded_name(job_id, "resume.docx") == shown["DOCX"]
     assert downloaded_name(job_id, "cover-letter.txt") == shown["TXT"]
@@ -97,36 +97,36 @@ def test_what_the_kit_shows_is_what_the_browser_saves(owner):
 
 def test_the_version_in_the_name_follows_the_packet(owner):
     job_id = make_packet(owner, version=3)
-    assert kit_names(job_id)["PDF"] == "rohan-roy-straive-v3.pdf"
-    assert downloaded_name(job_id, "resume.pdf") == "rohan-roy-straive-v3.pdf"
+    assert kit_names(job_id)["PDF"] == "Rohan_Roy_Straive_v3.pdf"
+    assert downloaded_name(job_id, "resume.pdf") == "Rohan_Roy_Straive_v3.pdf"
 
 
 def test_the_company_in_the_name_follows_the_job(owner):
     job_id = make_packet(owner, company="Acme Corp.")
-    assert kit_names(job_id)["PDF"] == "rohan-roy-acme-corp-v1.pdf"
-    assert downloaded_name(job_id, "resume.docx") == "rohan-roy-acme-corp-v1.docx"
+    assert kit_names(job_id)["PDF"] == "Rohan_Roy_Acme_Corp_v1.pdf"
+    assert downloaded_name(job_id, "resume.docx") == "Rohan_Roy_Acme_Corp_v1.docx"
 
 
 @pytest.mark.parametrize(("name", "company", "expected"), [
-    ("Rohan Roy", "Straive", "rohan-roy-straive"),
-    ("Rohan  Roy", "Straive / EU", "rohan-roy-straive-eu"),
-    ("Rohan Roy", "Кто-то", "rohan-roy"),           # nothing usable from the company falls back to the name
+    ("Rohan Roy", "Straive", "Rohan_Roy_Straive"),
+    ("Rohan  Roy", "Straive / EU", "Rohan_Roy_Straive_EU"),
+    ("Rohan Roy", "Кто-то", "Rohan_Roy"),           # nothing usable from the company falls back to the name
     ("", "", "resume"),                              # and nothing usable at all still gives a valid file name
-    ("Ann-Marie O'Neill", "AT&T", "ann-marie-o-neill-at-t"),
-    ("x" * 120, "Straive", "x" * 80),                # long names are cut, never left dangling on a dash
+    ("Ann-Marie O'Neill", "AT&T", "Ann_Marie_O_Neill_AT_T"),
+    ("x" * 120, "Straive", "x" * 80),                # long names are cut, never left dangling on an underscore
 ])
 def test_a_file_name_is_always_safe_to_write(name, company, expected):
     slug = packet_slug(name, company)
     assert slug == expected
-    assert slug and not slug.startswith("-") and not slug.endswith("-")
-    assert all(c.isalnum() or c == "-" for c in slug)
+    assert slug and not slug.startswith("_") and not slug.endswith("_")
+    assert all(c.isalnum() or c == "_" for c in slug)
 
 
 def test_each_part_of_a_packet_is_named_for_what_it_is():
-    assert packet_filename("rohan-roy-straive", "pdf", 2) == "rohan-roy-straive-v2.pdf"
-    assert packet_filename("rohan-roy-straive", "docx", 2) == "rohan-roy-straive-v2.docx"
-    assert packet_filename("rohan-roy-straive", "cover_letter") == "cover-letter-rohan-roy-straive.txt"
-    assert packet_filename("rohan-roy-straive", "pdf") == "rohan-roy-straive-v1.pdf"
+    assert packet_filename("Rohan_Roy_Straive", "pdf", 2) == "Rohan_Roy_Straive_v2.pdf"
+    assert packet_filename("Rohan_Roy_Straive", "docx", 2) == "Rohan_Roy_Straive_v2.docx"
+    assert packet_filename("Rohan_Roy_Straive", "cover_letter") == "Cover_Letter_Rohan_Roy_Straive.txt"
+    assert packet_filename("Rohan_Roy_Straive", "pdf") == "Rohan_Roy_Straive_v1.pdf"
 
 
 def test_a_download_works_before_the_packet_is_approved(owner):
@@ -139,5 +139,5 @@ def test_a_download_works_before_the_packet_is_approved(owner):
         db.add(ResumeVariant(job_id=job.id, user_id=owner, version=2, markdown="# Rohan", cover_letter="Dear team"))
         db.commit()
         job_id = job.id
-    assert downloaded_name(job_id, "resume.pdf") == "rohan-roy-straive-v2.pdf"
-    assert downloaded_name(job_id, "cover-letter.txt") == "cover-letter-rohan-roy-straive.txt"
+    assert downloaded_name(job_id, "resume.pdf") == "Rohan_Roy_Straive_v2.pdf"
+    assert downloaded_name(job_id, "cover-letter.txt") == "Cover_Letter_Rohan_Roy_Straive.txt"

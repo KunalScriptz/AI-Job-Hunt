@@ -156,7 +156,7 @@ def test_packet_is_the_approved_version_as_uploadable_files(account, packet_dir)
     assert out["apply_url"] == "https://grab.example.test/apply/1" and out["rules"]
     files = {f["format"]: f for f in out["files"] if f["role"] == "resume"}
     assert set(files) == {"pdf", "docx"}
-    assert files["pdf"]["filename"] == "test-candidate-grab-v2.pdf" and files["docx"]["filename"] == "test-candidate-grab-v2.docx"
+    assert files["pdf"]["filename"] == "Test_Candidate_Grab_v2.pdf" and files["docx"]["filename"] == "Test_Candidate_Grab_v2.docx"
     pdf = Path(files["pdf"]["path"])
     assert pdf.is_relative_to(packet_dir.resolve()) and pdf.read_bytes().startswith(b"%PDF")
     assert Path(files["docx"]["path"]).read_bytes().startswith(b"PK")  # a zip: Office Open XML
@@ -477,8 +477,8 @@ def test_the_approved_cover_letter_comes_as_pdf_and_docx(account, packet_dir):
     assert out["ok"] and out["cover_letter"] == letter
     letters = {f["format"]: f for f in out["files"] if f["role"] == "cover_letter"}
     assert set(letters) == {"pdf", "docx"}
-    assert letters["pdf"]["filename"] == "cover-letter-test-candidate-grab.pdf"
-    assert letters["docx"]["filename"] == "cover-letter-test-candidate-grab.docx"
+    assert letters["pdf"]["filename"] == "Cover_Letter_Test_Candidate_Grab.pdf"
+    assert letters["docx"]["filename"] == "Cover_Letter_Test_Candidate_Grab.docx"
     folder = Path(next(f for f in out["files"] if f["role"] == "resume")["path"]).parent
     assert Path(letters["pdf"]["path"]).parent == folder  # beside the resume files
     expected = " ".join(letter.split())
@@ -503,9 +503,9 @@ def test_no_cover_letter_files_when_the_letter_is_empty(account):
 def test_the_apply_screen_still_downloads_the_letter_as_text():
     from app.services.exports import packet_filename
 
-    assert packet_filename("a-b", "cover_letter") == "cover-letter-a-b.txt"
-    assert packet_filename("a-b", "cover_letter_pdf") == "cover-letter-a-b.pdf"
-    assert packet_filename("a-b", "pdf", 3, draft=True) == "a-b-v3-draft.pdf"
+    assert packet_filename("a-b", "cover_letter") == "Cover_Letter_a-b.txt"
+    assert packet_filename("a-b", "cover_letter_pdf") == "Cover_Letter_a-b.pdf"
+    assert packet_filename("a-b", "pdf", 3, draft=True) == "a-b_v3_draft.pdf"
 
 
 # ───────────── find_jobs ─────────────
@@ -559,7 +559,7 @@ def test_documents_of_an_unapproved_job_are_drafts_and_may_not_be_submitted(acco
     drafts = (packet_dir / str(uid) / str(sea_id) / "drafts").resolve()
     assert {f["role"] for f in out["files"]} == {"resume", "cover_letter"} and len(out["files"]) == 4
     for item in out["files"]:
-        assert Path(item["path"]).parent == drafts and "-draft." in item["filename"]
+        assert Path(item["path"]).parent == drafts and "_draft." in item["filename"]
     assert sorted(p.name for p in drafts.parent.iterdir()) == ["drafts"]  # nothing beside the approved files
     claim = call(uid, "begin_application_submission", job_id=sea_id)
     assert claim["ok"] is False and claim["status"] == "NOT_READY"

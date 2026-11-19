@@ -49,9 +49,9 @@ from app.services import approval, knowledge
 from app.services.exports import (
     DOCX_MEDIA_TYPE,
     markdown_to_docx,
-    markdown_to_simple_pdf,
     packet_filename,
     packet_slug,
+    render_resume_pdf,
 )
 from app.services.workflow import get_profile, mark_applied
 from app.settings import get_settings
@@ -218,7 +218,7 @@ def packet_files(db: Session, job: Job, resume: ResumeVariant, formats: list[str
     `role` (resume or cover_letter). A `draft` (a version that is not the approved packet) goes to the drafts/
     subfolder with "-draft" in its name, so it is never mistaken for, or overwrites, an approved file.
     """
-    renderers = {"pdf": markdown_to_simple_pdf, "docx": markdown_to_docx}
+    renderers = {"pdf": render_resume_pdf, "docx": markdown_to_docx}
     slug = packet_slug(get_profile(db).name, job.company)
     folder = packet_folder(job, draft=draft)
     folder.mkdir(parents=True, exist_ok=True)

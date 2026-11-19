@@ -79,6 +79,9 @@ Skills: only skills the resume names; never infer them from a job title. Normali
 Education: institution is the school or college attended; university is the degree-awarding university only when
   the resume names one separately (an affiliated college), otherwise null. grade is the GPA, CGPA, percentage or
   class exactly as written (8.2/10 CGPA, First Class), or null.
+Projects: name is the project's own short title only -- the text before the first colon, dash or pipe in the
+  resume's project line ("MockMind: Voice-Agentic AI Mock Interviewer | LiveKit, WebRTC" -> name "MockMind"),
+  copied exactly as written. Everything after goes in description or achievements, never into name.
 Cleanup: drop duplicate bullets caused by PDF extraction, and fix only obvious character corruption
   (quali[ication -> qualification, Ka[ka -> Kafka, Educa7on -> Education)."""
 
