@@ -76,6 +76,7 @@ jobs:
           set_env LLM_PROVIDER litellm
           set_env APPLICATION_INBOX_ENABLED true
           set_env APP_BASE_URL "$APP_BASE_URL"
+          set_env LATEX_RENDER_URL "https://latex.helixos.pro/compile"
           chmod 600 .env
 
           echo ".env written: $(wc -l < .env) lines, $(grep -cE '^[A-Z_]+=.+' .env) populated. Values never printed."
