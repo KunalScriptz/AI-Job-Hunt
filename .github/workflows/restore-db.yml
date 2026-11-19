@@ -1,0 +1,62 @@
+name: Restore database (manual)
+
+# workflow_dispatch only — this runs pg_restore --clean, which drops existing objects before restoring. Never
+# give this any automatic trigger (push, pull_request, etc.); it must only ever run when you explicitly click
+# "Run workflow" and type the confirmation, same reasoning as deploy.yml's push-only rule but doubly so since
+# this one is destructive to whatever's currently in the database.
+on:
+  workflow_dispatch:
+    inputs:
+      dump_path:
+        description: "Path to the .dump file on the Oracle box (scp it there yourself first — never through this repo)"
+        required: true
+        default: /home/ubuntu/all_bots/restore/jobhunt.dump
+      confirm:
+        description: "Type RESTORE to confirm — this replaces the current database contents"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: [self-hosted, Linux, ARM64]
+    env:
+      DEPLOY_DIR: /home/ubuntu/all_bots/jobhuntos_repo
+      DUMP_PATH: ${{ inputs.dump_path }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Check confirmation and file presence
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "RESTORE" ]; then
+            echo "Confirmation input was '$CONFIRM', not RESTORE — aborting, nothing was touched." >&2
+            exit 1
+          fi
+          if [ ! -f "$DUMP_PATH" ]; then
+            echo "No file at $DUMP_PATH — scp your local backup there first, then re-run this workflow." >&2
+            exit 1
+          fi
+          echo "Found dump: $(du -h "$DUMP_PATH" | cut -f1) at $DUMP_PATH"
+
+      - name: Restore into the jobhunt database
+        run: |
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          docker compose exec -T db pg_restore -U jobhunt -d jobhunt --clean --if-exists < "$DUMP_PATH"
+          echo "Restore complete."
+
+      - name: Verify (row counts only, no data printed)
+        run: |
+          cd "$DEPLOY_DIR"
+          docker compose exec -T db psql -U jobhunt -d jobhunt -c \
+            "select 'users' as table, count(*) from users
+             union all select 'resumes', count(*) from resumes
+             union all select 'candidate_profiles', count(*) from candidate_profiles
+             union all select 'jobs', count(*) from jobs;"
+
+      - name: Remove the dump from disk
+        if: always()
+        run: |
+          rm -f "$DUMP_PATH"
+          echo "Removed $DUMP_PATH from the server."
