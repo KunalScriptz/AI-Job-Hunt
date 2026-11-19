@@ -8,6 +8,24 @@ services:
       POSTGRES_DB: jobhunt
     volumes:
       - pgdata:/var/lib/postgresql/data
+  litellm:
+    # Self-hosted LiteLLM proxy (open source, not LiteLLM's commercial cloud) configured for DeepSeek.
+    # STORE_MODEL_IN_DB + DATABASE_URL: admin_api mode, needed for both model discovery (GET /model/info) and
+    # Job Hunt OS applying model/tier changes live (no proxy restart). Own database (not jobhunt's): LiteLLM's
+    # Prisma migrations refuse to run against a database with pre-existing, unrelated schema history. On a
+    # fresh install, create it once: `docker compose exec db psql -U jobhunt -d jobhunt -c "CREATE DATABASE litellm OWNER jobhunt;"`
+    # (needed again after `docker compose down -v`, since that drops the Postgres volume).
+    image: ghcr.io/berriai/litellm:main-stable
+    ports: ["4000:4000"]
+    volumes:
+      - ./integrations/litellm/config.deepseek.yaml:/app/config.yaml:ro
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      STORE_MODEL_IN_DB: "True"
+      DATABASE_URL: postgresql://jobhunt:jobhunt@db:5432/litellm
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on: [db]
   web:
     build: .
     # Headless Chromium (job-description recovery) uses shared memory; the app also passes --disable-dev-shm-usage.
@@ -16,6 +34,6 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://jobhunt:jobhunt@db:5432/jobhunt
-    depends_on: [db]
+    depends_on: [db, litellm]
 volumes:
   pgdata:

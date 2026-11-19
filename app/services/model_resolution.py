@@ -175,9 +175,9 @@ def escalation_model(snapshot: dict[str, Any], policy: dict[str, Any] | None) ->
 
 def _capabilities(snapshot: dict[str, Any], name: str | None) -> dict[str, Any]:
     entry = (snapshot.get("models") or {}).get(name or "") or {}
-    return {key: entry.get(key) for key in ("supports_structured_output", "supports_reasoning", "supports_tools",
-                                            "supports_vision", "context_window", "max_output_tokens", "model_type",
-                                            "embedding_dimensions")}
+    return {key: entry.get(key) for key in ("provider", "supports_structured_output", "supports_reasoning",
+                                            "supports_tools", "supports_vision", "context_window",
+                                            "max_output_tokens", "model_type", "embedding_dimensions")}
 
 
 def resolve(snapshot: dict[str, Any], worker_type: str | None, version: int | None = None) -> ResolvedWorker:
@@ -315,7 +315,10 @@ def request_params(worker: ResolvedWorker, model: str, contract: Any = None) -> 
         support = caps.get("supports_structured_output")
         if support is False:
             withheld.append("response_format")
-        elif contract is not None and support is True:
+        # DeepSeek's catalog entry claims native JSON Schema support, but its live API currently rejects the
+        # strict response_format with "This response_format type is unavailable now" (confirmed by direct
+        # testing against api.deepseek.com). Plain JSON mode works, so it is never sent the schema form.
+        elif contract is not None and support is True and caps.get("provider") != "deepseek":
             from app.prompts.contracts import response_format
 
             params["response_format"] = response_format(contract)

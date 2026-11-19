@@ -1,0 +1,28 @@
+# LiteLLM proxy config for Job Hunt OS using DeepSeek as the model backend. Self-hosted: this is the open-source
+# LiteLLM proxy, not LiteLLM's commercial cloud. Start (outside Docker): LITELLM_MASTER_KEY=sk-... DEEPSEEK_API_KEY=...
+#   litellm --config config.deepseek.yaml
+# Inside docker-compose, the `litellm` service already runs this with those two env vars (see docker-compose.yml).
+#
+# Model choices here are a starting point, not a requirement: Job Hunt OS discovers whatever LiteLLM serves, and
+# every worker's model is still chosen in Settings → AI Models.
+
+model_list:
+  - model_name: deepseek-chat        # DeepSeek-V3-class, general purpose
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek-reasoner    # DeepSeek-R1-class, heavier step-by-step reasoning
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+# If your DeepSeek account/dashboard lists a different model id (e.g. a newer release), change the `model:`
+# line above to `deepseek/<that-exact-id>` — everything else (api_key, model_name alias) stays the same.
+
+router_settings:
+  num_retries: 1
+  timeout: 300
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
