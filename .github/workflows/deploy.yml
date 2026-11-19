@@ -1,0 +1,96 @@
+name: Deploy to Oracle
+
+# Security-critical: only `push`/`workflow_dispatch` ever trigger a self-hosted-runner job here.
+# Never add `pull_request`/`pull_request_target` to this workflow's `on:` — this repo is public, and that
+# would let any fork's PR execute code directly on the Oracle box via this runner. push/workflow_dispatch can
+# only be caused by someone with write access to this repo, which is the whole point.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-oracle
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, jobhunt]
+    env:
+      DEPLOY_DIR: /home/ubuntu/all_bots/jobhuntos_repo
+      REPO_URL: https://github.com/${{ github.repository }}.git
+      APP_BASE_URL: https://jobhunt.helixos.pro
+    steps:
+      - name: Clone (first run) or pull (subsequent runs)
+        run: |
+          set -euo pipefail
+          if [ -d "$DEPLOY_DIR/.git" ]; then
+            echo "Existing clone at $DEPLOY_DIR — fetching latest main"
+            cd "$DEPLOY_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+          else
+            echo "No existing clone — cloning into $DEPLOY_DIR"
+            mkdir -p "$(dirname "$DEPLOY_DIR")"
+            git clone --branch main "$REPO_URL" "$DEPLOY_DIR"
+          fi
+
+      - name: Write .env from repository secrets
+        env:
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          # First run: seed from .env.example so every documented default (actor IDs, scheduler intervals, etc.)
+          # is present. Later runs: leave the live .env's own tuning alone, only refresh the keys this step owns.
+          test -f .env || cp .env.example .env
+
+          set_env() {
+            key="$1"; val="$2"
+            if grep -q "^${key}=" .env; then
+              sed -i "s|^${key}=.*|${key}=${val}|" .env
+            else
+              echo "${key}=${val}" >> .env
+            fi
+          }
+
+          set_env SECRET_KEY "$SECRET_KEY"
+          set_env APIFY_API_TOKEN "$APIFY_API_TOKEN"
+          set_env DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY"
+          set_env LITELLM_API_KEY "$LITELLM_API_KEY"
+          set_env LITELLM_MASTER_KEY "$LITELLM_MASTER_KEY"
+          set_env GOOGLE_OAUTH_CLIENT_ID "$GOOGLE_OAUTH_CLIENT_ID"
+          set_env GOOGLE_OAUTH_CLIENT_SECRET "$GOOGLE_OAUTH_CLIENT_SECRET"
+          set_env LLM_PROVIDER litellm
+          set_env APPLICATION_INBOX_ENABLED true
+          set_env APP_BASE_URL "$APP_BASE_URL"
+          chmod 600 .env
+
+          echo ".env written: $(wc -l < .env) lines, $(grep -cE '^[A-Z_]+=.+' .env) populated. Values never printed."
+
+      - name: Deploy (build, start, wait for DB, create litellm DB)
+        run: |
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          make up
+
+      - name: Status and recent logs
+        run: |
+          cd "$DEPLOY_DIR"
+          echo "--- containers ---"
+          docker compose ps
+          echo "--- web (last 50 lines) ---"
+          docker compose logs --tail=50 web
+          echo "--- litellm (last 20 lines) ---"
+          docker compose logs --tail=20 litellm
+          echo "--- health check ---"
+          curl -sf http://localhost:8420/health && echo " OK" || (echo " HEALTH CHECK FAILED" && exit 1)
